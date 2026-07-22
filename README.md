@@ -10,7 +10,16 @@ rm-comments --stdout src/main.rs     # print result, don't modify
 rm-comments --check src/main.rs      # exit 1 if changes would be made (CI/hooks)
 cat foo.py | rm-comments --stdin --lang py
 rm-comments --keep-doc-comments lib.rs   # preserve ///, //!, /** */ docs
+rm-comments --keep 'TODO|SAFETY' lib.rs  # preserve comments matching a regex
+rm-comments --lines 40-80 lib.rs         # only touch comments in a line range
+rm-comments --list lib.rs                # enumerate all comments as JSON
+rm-comments --apply 2,5,7 lib.rs         # remove exactly those comment ids
 ```
+
+**Directive comments are preserved by default** — `// eslint-disable`, `# noqa`,
+`# type: ignore`, `//go:generate`, `# shellcheck`, `# frozen_string_literal` and friends
+carry semantics for other tools, so removing them changes program behavior. Pass
+`--strip-directives` to remove them too.
 
 ## Install
 
@@ -103,6 +112,61 @@ today. The `task: spawn` hop in the palette is a Zed limit, not a design choice.
 spawning over `task::Rerun` (rerun reuses a stale `$ZED_FILE` unless bound with
 `"reevaluate_context": true`). If the task fails, the file is untouched; open Zed's
 terminal panel to see the error.
+
+## For AI agents
+
+LLMs over-comment. `rm-comments` is built to be the safe mechanical layer under an
+agent's judgment: the agent decides *which* comments are noise, the tool guarantees the
+removal can't corrupt anything.
+
+The contract:
+
+```sh
+rm-comments --list file.rs     # JSON: every comment with id, lines, text, is_doc, is_directive
+rm-comments --apply 2,5,7 file.rs   # remove exactly those ids, nothing else
+```
+
+The agent reads the JSON, applies its policy (e.g. "keep comments explaining *why*,
+drop comments narrating *what*"), and applies the surviving verdict. `--lines A-B` scopes
+policy-mode stripping to a region — useful when the agent should only clean code it just
+wrote. Ids are positions in the current content; re-run `--list` after any edit.
+
+**Claude Code skill** — [`skills/strip-comments/SKILL.md`](skills/strip-comments/SKILL.md)
+packages this workflow with an opinionated keep/remove policy (WHY stays, WHAT goes).
+Install it:
+
+```sh
+mkdir -p ~/.claude/skills/strip-comments
+cp skills/strip-comments/SKILL.md ~/.claude/skills/strip-comments/
+```
+
+(or into a project's `.claude/skills/` to share it with the team). Then `/strip-comments`
+or just ask the agent to clean up comments.
+
+**Hook recipe (blunt instrument)** — strip every comment from any file Claude Code edits,
+automatically. Good for greenfield/solo projects where no comments are wanted at all;
+too aggressive for shared codebases (prefer the skill there). In `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | xargs -I{} rm-comments {} 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Directives survive even the blunt instrument (default-on protection), and unparseable or
+unsupported files are left untouched, so the hook is safe to fire on everything.
 
 ## Tests
 

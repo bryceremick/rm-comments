@@ -1,13 +1,17 @@
 //! Edge cases for the stripping logic (library level).
 
-use rm_comments::{languages, strip_comments};
+use rm_comments::{languages, strip_comments, Options};
+
+fn keep_doc() -> Options {
+    Options { keep_doc_comments: true, ..Default::default() }
+}
 
 fn lang(name: &str) -> &'static languages::Lang {
     languages::by_name(name).unwrap()
 }
 
 fn strip(name: &str, src: &str) -> String {
-    strip_comments(src, lang(name), false).unwrap()
+    strip_comments(src, lang(name), &Options::default()).unwrap()
 }
 
 // --- comment-like text inside non-comment nodes ---
@@ -140,14 +144,14 @@ fn shebang_then_comments_only() {
 #[test]
 fn keep_doc_jsdoc() {
     let src = "/** jsdoc */\nfunction f() {}\n// plain\nfunction g() {}\n";
-    let out = strip_comments(src, lang("javascript"), true).unwrap();
+    let out = strip_comments(src, lang("javascript"), &keep_doc()).unwrap();
     assert_eq!(out, "/** jsdoc */\nfunction f() {}\nfunction g() {}\n");
 }
 
 #[test]
 fn keep_doc_csharp_triple_slash() {
     let src = "/// <summary>doc</summary>\nclass A {\n    // plain\n}\n";
-    let out = strip_comments(src, lang("csharp"), true).unwrap();
+    let out = strip_comments(src, lang("csharp"), &keep_doc()).unwrap();
     assert_eq!(out, "/// <summary>doc</summary>\nclass A {\n}\n");
 }
 
@@ -155,7 +159,7 @@ fn keep_doc_csharp_triple_slash() {
 fn empty_block_comment_is_not_doc() {
     // `/**/` must not be mistaken for a `/**` doc comment
     let src = "/**/\nfn main() {}\n";
-    let out = strip_comments(src, lang("rust"), true).unwrap();
+    let out = strip_comments(src, lang("rust"), &keep_doc()).unwrap();
     assert_eq!(out, "fn main() {}\n");
 }
 

@@ -209,6 +209,153 @@ fn permissions_preserved() {
     assert_eq!(mode, 0o754);
 }
 
+// --- agent controls: --keep, --strip-directives, --lines, --list, --apply ---
+
+#[test]
+fn keep_flag_preserves_matches() {
+    let f = tmpfile("a.rs", "// TODO: later\n// noise\nfn main() {}\n");
+    let out = run(&["--keep", "TODO", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "// TODO: later\nfn main() {}\n");
+}
+
+#[test]
+fn invalid_keep_regex_exits_2() {
+    let out = run(&["--keep", "(unclosed", "a.rs"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("invalid regex"));
+}
+
+#[test]
+fn directives_kept_by_default_stripped_on_request() {
+    let src = "// eslint-disable-next-line\nconsole.log(1);\n";
+    let f = tmpfile("a.js", src);
+    assert!(run(&[f.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), src, "directive was stripped by default");
+    assert!(run(&["--strip-directives", f.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), "console.log(1);\n");
+}
+
+#[test]
+fn lines_flag_limits_scope() {
+    let f = tmpfile("a.rs", "// one\nfn a() {}\n// two\nfn b() {}\n");
+    let out = run(&["--lines", "3-4", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "// one\nfn a() {}\nfn b() {}\n");
+}
+
+#[test]
+fn lines_flag_single_number_and_repeat() {
+    let f = tmpfile("a.rs", "// one\nfn a() {}\n// two\nfn b() {}\n// three\n");
+    let out = run(&["--lines", "1", "--lines", "5", f.to_str().unwrap()]);
+    assert!(out.status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), "fn a() {}\n// two\nfn b() {}\n");
+}
+
+#[test]
+fn lines_flag_rejects_garbage() {
+    for bad in ["abc", "5-2", "0", "1-x"] {
+        let out = run(&["--lines", bad, "a.rs"]);
+        assert_eq!(out.status.code(), Some(2), "--lines {bad} should be rejected");
+    }
+}
+
+#[test]
+fn list_outputs_valid_json_and_modifies_nothing() {
+    let src = "/// doc\nfn main() {\n    let x = 1; // eslint-disable-line\n}\n// gone\n";
+    let f = tmpfile("a.rs", src);
+    let out = run(&["--list", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), src, "--list modified the file");
+
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    assert_eq!(v["language"], "rust");
+    let comments = v["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 3);
+    assert_eq!(comments[0]["id"], 0);
+    assert_eq!(comments[0]["is_doc"], true);
+    assert_eq!(comments[0]["text"], "/// doc");
+    assert_eq!(comments[1]["is_directive"], true);
+    assert_eq!(comments[2]["text"], "// gone");
+    assert_eq!(comments[2]["start_line"], 5);
+}
+
+#[test]
+fn list_json_escapes_special_chars() {
+    let f = tmpfile("a.rs", "fn main() {} // \"quoted\" \\ back\tslash\n");
+    let out = run(&["--list", f.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    assert_eq!(
+        v["comments"][0]["text"],
+        "// \"quoted\" \\ back\tslash"
+    );
+}
+
+#[test]
+fn list_empty_file_is_valid_json() {
+    let f = tmpfile("a.rs", "fn main() {}\n");
+    let out = run(&["--list", f.to_str().unwrap()]);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    assert_eq!(v["comments"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn list_works_on_stdin() {
+    let out = run_stdin(&["--list", "--stdin", "--lang", "py"], "# c\nx = 1\n");
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    assert_eq!(v["file"], "<stdin>");
+    assert_eq!(v["comments"][0]["text"], "# c");
+}
+
+#[test]
+fn apply_removes_exactly_those_ids() {
+    let f = tmpfile("a.rs", "// zero\n// one\n// two\nfn main() {}\n");
+    let out = run(&["--apply", "0,2", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "// one\nfn main() {}\n");
+}
+
+#[test]
+fn apply_unknown_id_exits_2_untouched() {
+    let src = "// a\nfn main() {}\n";
+    let f = tmpfile("a.rs", src);
+    let out = run(&["--apply", "9", f.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown comment id"));
+    assert_eq!(fs::read_to_string(&f).unwrap(), src);
+}
+
+#[test]
+fn apply_invalid_id_syntax_exits_2() {
+    let out = run(&["--apply", "1,x", "a.rs"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn list_apply_roundtrip_through_binary() {
+    // the full agent workflow against the real binary
+    let src = "/// doc\nfn f() {}\n// narration\nfn g() {} // type: ignore\n";
+    let f = tmpfile("a.rs", src);
+    let out = run(&["--list", f.to_str().unwrap()]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let ids: Vec<String> = v["comments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["is_doc"] == false && c["is_directive"] == false)
+        .map(|c| c["id"].to_string())
+        .collect();
+    let out = run(&["--apply", &ids.join(","), f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let after = fs::read_to_string(&f).unwrap();
+    assert!(after.contains("/// doc"));
+    assert!(after.contains("// type: ignore"));
+    assert!(!after.contains("narration"));
+}
+
 // --- install-zed-task (HOME is overridden so the real config is never touched) ---
 
 fn run_install(home: &std::path::Path) -> Output {
