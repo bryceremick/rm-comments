@@ -65,7 +65,15 @@ end
 EOF
 
 cd "$WORK/tap"
+if [[ -n "${CI:-}" ]]; then
+  git config user.name "github-actions[bot]"
+  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+fi
 git add Formula/rm-comments.rb
+if git diff --cached --quiet; then
+  echo "Formula already up to date for $VERSION — nothing to push."
+  exit 0
+fi
 git commit -m "rm-comments $VERSION"
 git push
 echo "Formula for $VERSION pushed to $TAP."
