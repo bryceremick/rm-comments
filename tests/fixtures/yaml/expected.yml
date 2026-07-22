@@ -1,0 +1,6 @@
+name: demo
+url: "https://example.com/#anchor"
+literal: "not # a comment"
+items:
+  - one
+  - two

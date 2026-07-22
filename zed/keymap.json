@@ -1,0 +1,9 @@
+// Optional: paste into ~/.config/zed/keymap.json for one-press invocation.
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-alt-/": ["task::Spawn", { "task_name": "Strip Comments" }]
+    }
+  }
+]

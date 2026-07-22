@@ -1,0 +1,8 @@
+# Header comment.
+name: demo
+url: "https://example.com/#anchor" # trailing
+literal: "not # a comment"
+# full-line comment
+items:
+  - one
+  - two # trailing on item

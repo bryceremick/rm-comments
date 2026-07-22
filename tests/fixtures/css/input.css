@@ -1,0 +1,6 @@
+/* Block comment. */
+body {
+  /* full-line */
+  background: url("https://example.com/x.png"); /* trailing */
+  content: "not /* a comment */";
+}

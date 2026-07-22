@@ -1,0 +1,13 @@
+// Paste into ~/.config/zed/tasks.json (global) or .zed/tasks.json (project).
+// Replace the command path if rm-comments is not on Zed's PATH.
+[
+  {
+    "label": "Strip Comments",
+    "command": "rm-comments \"$ZED_FILE\"",
+    "use_new_terminal": false,
+    "allow_concurrent_runs": true,
+    "reveal": "never",
+    "hide": "on_success",
+    "save": "current"
+  }
+]

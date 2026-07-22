@@ -1,0 +1,29 @@
+[package]
+name = "rm-comments"
+version = "0.1.0"
+edition = "2024"
+description = "Strip all comments from source files, safely, via tree-sitter. Ships one-command Zed editor integration."
+license = "MIT"
+repository = "https://github.com/bryceremick/rm-comments"
+readme = "README.md"
+keywords = ["zed", "comments", "tree-sitter", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+tree-sitter = "0.26.11"
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.2"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-css = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-php = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-rust = "0.24.2"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-yaml = "0.7.2"

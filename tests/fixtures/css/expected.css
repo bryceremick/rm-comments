@@ -1,0 +1,4 @@
+body {
+  background: url("https://example.com/x.png");
+  content: "not /* a comment */";
+}

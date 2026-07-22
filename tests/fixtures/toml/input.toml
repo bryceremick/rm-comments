@@ -1,0 +1,6 @@
+# Header comment.
+[package]
+name = "demo" # trailing
+url = "https://example.com/#anchor"
+# full-line comment
+version = "0.1.0"
