@@ -230,9 +230,12 @@ fn task_entry(exe: &str) -> String {
 /// left intact. Anything unexpected -> back off and print the snippet to
 /// paste manually; the original file is backed up before any modification.
 fn install_zed_task() {
+    // Deliberately not canonicalized: a brew-installed binary is a symlink
+    // into a versioned Cellar path that changes on upgrade, while the
+    // symlink itself is stable.
     let exe = std::env::current_exe()
         .ok()
-        .and_then(|p| p.canonicalize().ok())
+        .filter(|p| p.is_absolute())
         .unwrap_or_else(|| die("cannot determine own binary path"));
     let entry = task_entry(&exe.to_string_lossy());
 
