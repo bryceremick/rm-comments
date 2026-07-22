@@ -1,13 +1,18 @@
 ---
-name: strip-comments
+name: rm-comments
 description: Remove unnecessary comments from source code using the rm-comments CLI. Use after writing or editing code, when asked to "clean up comments", "remove comments", "strip comments", or "de-noise" a file, or when reviewing code that is over-commented. Keeps comments that explain WHY; removes comments that narrate WHAT.
 ---
 
-# Strip unnecessary comments
+# rm-comments: remove unnecessary comments
 
-Clean a file's comments with the `rm-comments` CLI (`cargo install rm-comments`).
+Clean a file's comments with the `rm-comments` CLI.
 Never delete comments by hand-editing the file — the tool parses with tree-sitter, so it
 cannot touch comment-like text inside strings and cannot corrupt a file that doesn't parse.
+
+If `rm-comments` is not on PATH, offer to install it first (any of):
+`brew install bryceremick/tap/rm-comments`, `cargo install rm-comments`,
+`cargo binstall rm-comments`, or a prebuilt binary from
+https://github.com/bryceremick/rm-comments/releases.
 
 ## The policy: WHY stays, WHAT goes
 

@@ -2,7 +2,7 @@
 // Replace the command path if rm-comments is not on Zed's PATH.
 [
   {
-    "label": "Strip Comments",
+    "label": "rm-comments",
     "command": "rm-comments \"$ZED_FILE\"",
     "use_new_terminal": false,
     "allow_concurrent_runs": true,

@@ -386,7 +386,7 @@ fn install_creates_fresh_tasks_json() {
     let out = run_install(&home);
     assert!(out.status.success(), "stderr: {:?}", out.stderr);
     let written = fs::read_to_string(tasks_path(&home)).unwrap();
-    assert!(written.contains("\"label\": \"Strip Comments\""));
+    assert!(written.contains("\"label\": \"rm-comments\""));
     assert!(written.contains(BIN), "task should use the binary's own path");
     assert!(written.contains("\"save\": \"current\""));
     // fresh file is strict JSON — must parse
@@ -414,7 +414,7 @@ fn install_merges_into_existing_array() {
     assert!(out.status.success(), "stderr: {:?}", out.stderr);
     let written = fs::read_to_string(&path).unwrap();
     assert!(written.contains("\"label\": \"other\""), "existing task lost");
-    assert!(written.contains("\"label\": \"Strip Comments\""));
+    assert!(written.contains("\"label\": \"rm-comments\""));
     // result must still be valid JSON (no comments were present)
     let commas = written.matches("},").count();
     assert_eq!(commas, 1, "exactly one separating comma expected:\n{written}");
@@ -437,7 +437,7 @@ fn install_merges_into_jsonc_with_comments_and_trailing_comma() {
     let written = fs::read_to_string(&path).unwrap();
     assert!(written.contains("// my tasks"), "user comment lost");
     assert!(written.contains("// keep"), "user comment lost");
-    assert!(written.contains("\"label\": \"Strip Comments\""));
+    assert!(written.contains("\"label\": \"rm-comments\""));
     // trailing comma already separated the entries — none may be added inside the comment line
     assert!(!written.contains("keep,"), "comma landed in a comment:\n{written}");
 }
@@ -451,7 +451,7 @@ fn install_merges_into_empty_array() {
     let out = run_install(&home);
     assert!(out.status.success(), "stderr: {:?}", out.stderr);
     let written = fs::read_to_string(&path).unwrap();
-    assert!(written.contains("\"label\": \"Strip Comments\""));
+    assert!(written.contains("\"label\": \"rm-comments\""));
     assert!(!written.contains(",\n["), "stray comma in empty array:\n{written}");
 }
 

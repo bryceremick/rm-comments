@@ -9,6 +9,10 @@ readme = "README.md"
 keywords = ["zed", "comments", "tree-sitter", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/rm-comments-v{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+
 [dependencies]
 regex = "1.13.1"
 tree-sitter = "0.26.11"

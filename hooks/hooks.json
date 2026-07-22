@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v rm-comments >/dev/null 2>&1 || echo 'The rm-comments plugin is enabled but the rm-comments CLI is not installed. Install it with: cargo install rm-comments (or: brew install bryceremick/tap/rm-comments). Offer to run the install when the user first asks for comment cleanup.'"
+          }
+        ]
+      }
+    ]
+  }
+}

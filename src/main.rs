@@ -12,7 +12,7 @@ Usage: rm-comments [OPTIONS] <FILE>
 Strip all comments from a source file (in place by default).
 
 Commands:
-  install-zed-task     Add a 'Strip Comments' task to ~/.config/zed/tasks.json
+  install-zed-task     Add a 'rm-comments' task to ~/.config/zed/tasks.json
 
 Options:
   --stdout             Write result to stdout instead of modifying the file
@@ -207,7 +207,7 @@ fn comments_json(file: &str, lang: &str, comments: &[rm_comments::Comment]) -> S
     )
 }
 
-const TASK_LABEL: &str = "Strip Comments";
+const TASK_LABEL: &str = "rm-comments";
 
 fn task_entry(exe: &str) -> String {
     format!(
@@ -223,7 +223,7 @@ fn task_entry(exe: &str) -> String {
     )
 }
 
-/// Add the 'Strip Comments' task to ~/.config/zed/tasks.json.
+/// Add the 'rm-comments' task to ~/.config/zed/tasks.json.
 ///
 /// Missing file: written whole. Existing file: the entry is spliced before
 /// the final `]` so user comments and trailing commas (Zed allows both) are

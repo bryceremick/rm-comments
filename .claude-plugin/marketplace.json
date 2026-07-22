@@ -1,0 +1,14 @@
+{
+  "name": "rm-comments",
+  "owner": {
+    "name": "Bryce Remick",
+    "url": "https://github.com/bryceremick"
+  },
+  "plugins": [
+    {
+      "name": "rm-comments",
+      "source": "./",
+      "description": "Remove unnecessary comments from source code — keeps WHY comments, removes WHAT comments. Requires the rm-comments CLI (cargo install rm-comments)."
+    }
+  ]
+}

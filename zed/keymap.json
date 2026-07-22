@@ -3,7 +3,7 @@
   {
     "context": "Workspace",
     "bindings": {
-      "cmd-alt-/": ["task::Spawn", { "task_name": "Strip Comments" }]
+      "cmd-alt-/": ["task::Spawn", { "task_name": "rm-comments" }]
     }
   }
 ]

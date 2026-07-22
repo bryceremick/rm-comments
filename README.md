@@ -24,10 +24,14 @@ carry semantics for other tools, so removing them changes program behavior. Pass
 ## Install
 
 ```sh
-cargo install rm-comments
+brew install bryceremick/tap/rm-comments   # macOS / Linux, no toolchain needed
+cargo install rm-comments                  # from source via crates.io
+cargo binstall rm-comments                 # prebuilt binary via cargo-binstall
 ```
 
-Or build from source: `cargo build --release` → `target/release/rm-comments`.
+Prebuilt binaries for macOS (arm/x86), Linux (arm/x86), and Windows are on the
+[releases page](https://github.com/bryceremick/rm-comments/releases). Or build from
+source: `cargo build --release` → `target/release/rm-comments`.
 
 ## Safety guarantees
 
@@ -89,12 +93,12 @@ Comment node-kind names differ per grammar — verify against the grammar's
 rm-comments install-zed-task
 ```
 
-This adds a **Strip Comments** task (pointing at the binary's own absolute path) to
+This adds a **rm-comments** task (pointing at the binary's own absolute path) to
 `~/.config/zed/tasks.json` — creating the file, or splicing into an existing one while
 preserving your comments and trailing commas (a backup is written first; if the file looks
 too unusual to edit safely, it prints the snippet for you to paste instead). Idempotent.
 
-Then in Zed: `cmd-shift-p` → `task: spawn` → **Strip Comments**. The task saves the focused
+Then in Zed: `cmd-shift-p` → `task: spawn` → **rm-comments**. The task saves the focused
 buffer first (`"save": "current"`), strips the file on disk, and Zed reloads it. For a
 one-press keybinding, add [`zed/keymap.json`](zed/keymap.json) to `~/.config/zed/keymap.json`
 (`cmd-alt-/` by default). Manual task setup: [`zed/tasks.json`](zed/tasks.json).
@@ -131,16 +135,25 @@ drop comments narrating *what*"), and applies the surviving verdict. `--lines A-
 policy-mode stripping to a region — useful when the agent should only clean code it just
 wrote. Ids are positions in the current content; re-run `--list` after any edit.
 
-**Claude Code skill** — [`skills/strip-comments/SKILL.md`](skills/strip-comments/SKILL.md)
-packages this workflow with an opinionated keep/remove policy (WHY stays, WHAT goes).
-Install it:
+**Claude Code plugin** — this repo is a plugin marketplace. In Claude Code:
 
-```sh
-mkdir -p ~/.claude/skills/strip-comments
-cp skills/strip-comments/SKILL.md ~/.claude/skills/strip-comments/
+```
+/plugin marketplace add bryceremick/rm-comments
+/plugin install rm-comments@rm-comments
 ```
 
-(or into a project's `.claude/skills/` to share it with the team). Then `/strip-comments`
+That installs the skill below plus a session check that tells the agent how to install
+the CLI if it's missing.
+
+**Or just the skill** — [`skills/rm-comments/SKILL.md`](skills/rm-comments/SKILL.md)
+packages this workflow with an opinionated keep/remove policy (WHY stays, WHAT goes):
+
+```sh
+mkdir -p ~/.claude/skills/rm-comments
+cp skills/rm-comments/SKILL.md ~/.claude/skills/rm-comments/
+```
+
+(or into a project's `.claude/skills/` to share it with the team). Then `/rm-comments`
 or just ask the agent to clean up comments.
 
 **Hook recipe (blunt instrument)** — strip every comment from any file Claude Code edits,

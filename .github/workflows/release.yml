@@ -1,0 +1,37 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo test --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          bin=rm-comments
+          [[ "${{ matrix.target }}" == *windows* ]] && bin=rm-comments.exe
+          mkdir pkg
+          cp "target/${{ matrix.target }}/release/$bin" pkg/
+          tar -C pkg -czf "rm-comments-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz" .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: rm-comments-*.tar.gz

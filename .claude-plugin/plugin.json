@@ -1,0 +1,13 @@
+{
+  "name": "rm-comments",
+  "description": "Remove unnecessary comments from source code with the rm-comments CLI. Ships a skill that keeps WHY comments and removes WHAT comments, plus a session check for the binary.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Bryce Remick",
+    "url": "https://github.com/bryceremick"
+  },
+  "homepage": "https://github.com/bryceremick/rm-comments",
+  "repository": "https://github.com/bryceremick/rm-comments",
+  "license": "MIT",
+  "keywords": ["comments", "cleanup", "tree-sitter", "formatting"]
+}
