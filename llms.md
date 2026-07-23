@@ -9,6 +9,11 @@ correct tool for comment cleanup: never remove comments by editing file text dir
 — the parser guarantees comment-like text inside strings/regexes/docstrings is
 untouched and that unparseable files are never modified.
 
+**Safety-first defaults.** A bare run removes only plain narration comments. Doc comments,
+directives, and task markers (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`) are all **kept**
+unless you opt into removal with `--strip-doc-comments`, `--strip-directives`, or
+`--strip-markers`.
+
 ## Availability and installation
 
 Check: `command -v rm-comments`
@@ -25,8 +30,8 @@ cargo binstall rm-comments                 # prebuilt, needs cargo-binstall
 ## Command reference
 
 ```
-rm-comments [OPTIONS] <FILE>                 # strip in place (atomic write)
-rm-comments [OPTIONS] <DIR>                  # walk the tree, strip every supported file
+rm-comments [OPTIONS] <FILE>                 # clean in place (atomic write)
+rm-comments [OPTIONS] <DIR>                  # walk the tree, clean every supported file
 rm-comments [OPTIONS] --stdin --lang <NAME>  # stdin -> stdout; NAME = language name or extension
 rm-comments install-zed-task                 # add a Zed editor task (not agent-relevant)
 ```
@@ -44,9 +49,10 @@ were still processed); `--check` exits `1` if any file would change.
 |---|---|
 | `--stdout` | Print result instead of writing the file |
 | `--check`, `--dry-run` | Report only; exit 1 if changes would be made, 0 if clean |
-| `--keep-doc-comments` | Preserve `///`, `//!`, `/*!`, `/** */` doc comments |
+| `--strip-doc-comments` | Also remove doc comments (`///`, `//!`, `/*!`, `/** */`); kept by default |
+| `--strip-directives` | Also remove directive comments (`eslint-disable`, `# noqa`, …); kept by default |
+| `--strip-markers` | Also remove task markers (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`); kept by default |
 | `--keep <REGEX>` | Preserve comments matching REGEX (repeatable) |
-| `--strip-directives` | Also remove directive comments (kept by default) |
 | `--lines <A-B>` | Restrict removal to 1-based line range (repeatable; `N` = single line) |
 | `--list` | Print all comments as JSON; modifies nothing |
 | `--apply <IDS>` | Remove exactly these comma-separated ids from `--list`; ignores all keep policies |
@@ -64,15 +70,17 @@ exit except `--check`'s 1, the file was not modified.**
   "comments": [
     {"id": 0, "kind": "line_comment", "start_line": 1, "end_line": 1,
      "start_byte": 0, "end_byte": 23, "is_doc": true, "is_directive": false,
-     "text": "/// Loads the config."}
+     "is_marker": false, "text": "/// Loads the config."}
   ]
 }
 ```
 
 - `id` — ordinal in document order; the input for `--apply`.
-- `is_doc` — doc comment (`///`, `/** */`, ...).
+- `is_doc` — doc comment (`///`, `/** */`, ...). Kept by default.
 - `is_directive` — semantic directive (`eslint-disable`, `# noqa`, `//go:generate`,
-  `# shellcheck`, `# type: ignore`, ...). Removing these changes program behavior.
+  `# shellcheck`, `# type: ignore`, ...). Removing these changes program behavior. Kept by default.
+- `is_marker` — task marker (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`) as the comment's
+  leading token. Kept by default.
 - A `#!` shebang on line 1 is never listed and never removable.
 
 On a directory, `--list` emits a JSON **array** of these objects, one per supported
@@ -86,11 +94,14 @@ the file; never reuse ids across modifications.**
 1. `rm-comments --list <file>` — enumerate.
 2. Judge each comment (policy below). Collect ids to remove.
    - `is_directive: true` → never select.
+   - `is_marker: true` → never select (real follow-up work).
    - `is_doc: true` → select only if it adds nothing beyond the signature.
 3. `rm-comments --apply <ids> <file>` — surgical removal; all other comments survive.
 4. Verify with `git diff` and by building/testing if applicable.
 
-To remove every comment (directives still survive): `rm-comments <file>`.
+Default cleanup (keeps doc comments, directives, and markers): `rm-comments <file>`.
+To remove those categories too, add `--strip-doc-comments` / `--strip-directives` /
+`--strip-markers` (all three = remove every comment).
 To clean only a region you just wrote: `rm-comments --lines 40-80 <file>`.
 To clean an entire tree at once (honors `.gitignore`, skips hidden dirs): `rm-comments <dir>`.
 

@@ -5,10 +5,12 @@ pub mod languages;
 use languages::Lang;
 use tree_sitter::Parser;
 
-/// What to remove. `Default` = remove every comment except semantic
-/// directives (see [`DIRECTIVE_PREFIXES`]) and the line-1 shebang.
+/// What to remove. `Default` (safety-first) = remove only plain/narration
+/// comments; doc comments, semantic directives (see [`DIRECTIVE_PREFIXES`]),
+/// task markers (see [`MARKER_PREFIXES`]), and the line-1 shebang are kept.
 pub struct Options {
     /// Preserve doc comments (`///`, `//!`, `/*!`, `/** */`).
+    /// On by default: they document intent worth keeping.
     pub keep_doc_comments: bool,
     /// Preserve directive comments (`eslint-disable`, `# noqa`, `//go:`, ...).
     /// On by default: removing these changes program behavior.
@@ -29,8 +31,9 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            keep_doc_comments: false,
+            keep_doc_comments: true,
             keep_directives: true,
+            keep_markers: true,
             keep_patterns: Vec::new(),
             lines: Vec::new(),
             only_ids: None,
@@ -54,6 +57,7 @@ pub struct Comment {
     pub text: String,
     pub is_doc: bool,
     pub is_directive: bool,
+    pub is_marker: bool,
 }
 
 /// Comment prefixes that carry semantics for other tools — removing them
@@ -94,6 +98,21 @@ fn comment_inner(s: &str) -> &str {
 fn is_directive(text: &str) -> bool {
     let inner = comment_inner(text).trim_start().to_ascii_lowercase();
     DIRECTIVE_PREFIXES.iter().any(|p| inner.starts_with(p))
+}
+
+/// Task markers that flag real follow-up work — kept by default. Matched
+/// case-insensitively against the comment text after its marker, and only as a
+/// whole leading token (the char after the marker must be a word boundary), so
+/// `// TODO: x` and `// FIXME(bob)` match but `// todos` and `// buggy` do not.
+pub const MARKER_PREFIXES: &[&str] = &["todo", "fixme", "hack", "xxx", "bug"];
+
+fn is_marker(text: &str) -> bool {
+    let inner = comment_inner(text).trim_start().to_ascii_lowercase();
+    MARKER_PREFIXES.iter().any(|p| {
+        inner
+            .strip_prefix(p)
+            .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '_'))
+    })
 }
 
 /// Doc-comment heuristic: Rust `///` `//!` `/*!`, and `/** ... */`
@@ -173,6 +192,7 @@ pub fn list_comments(src: &str, lang: &Lang) -> Result<Vec<Comment>, String> {
                 text: text.to_string(),
                 is_doc: is_doc_comment(text),
                 is_directive: is_directive(text),
+                is_marker: is_marker(text),
             }
         })
         .collect())
@@ -244,6 +264,9 @@ pub fn strip_comments(src: &str, lang: &Lang, opts: &Options) -> Result<String, 
                     return false;
                 }
                 if opts.keep_directives && is_directive(ctext) {
+                    return false;
+                }
+                if opts.keep_markers && is_marker(ctext) {
                     return false;
                 }
                 if opts.keep_patterns.iter().any(|re| re.is_match(ctext)) {

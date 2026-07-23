@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 use rm_comments::{languages, strip_comments, Options};
 
-fn keep_doc() -> Options {
-    Options { keep_doc_comments: true, ..Default::default() }
+fn strip_doc() -> Options {
+    Options { keep_doc_comments: false, ..Default::default() }
 }
 
 /// Every language in the registry has a fixture pair; stripping input
@@ -32,15 +32,16 @@ fn rust() -> &'static languages::Lang {
 }
 
 #[test]
-fn keep_doc_comments() {
+fn doc_comments_kept_by_default() {
     let src = "//! inner doc\n/// outer doc\n// plain\nfn f() {}\n/** block doc */\nfn g() {}\n";
-    let out = strip_comments(src, rust(), &keep_doc()).unwrap();
+    // default keeps doc comments, removes only the plain one
+    let out = strip_comments(src, rust(), &Options::default()).unwrap();
     assert_eq!(
         out,
         "//! inner doc\n/// outer doc\nfn f() {}\n/** block doc */\nfn g() {}\n"
     );
-    // default removes them all
-    let out = strip_comments(src, rust(), &Options::default()).unwrap();
+    // --strip-doc-comments removes them all
+    let out = strip_comments(src, rust(), &strip_doc()).unwrap();
     assert_eq!(out, "fn f() {}\nfn g() {}\n");
 }
 

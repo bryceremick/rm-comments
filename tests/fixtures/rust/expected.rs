@@ -1,3 +1,6 @@
+//! Module doc comment.
+
+/// Doc comment on main.
 fn main() {
     let url = "https://example.com/#anchor";
     let s = "not // a comment";

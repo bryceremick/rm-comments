@@ -9,9 +9,12 @@ Usage: rm-comments [OPTIONS] <FILE|DIR>
        rm-comments [OPTIONS] --stdin --lang <NAME>
        rm-comments install-zed-task
 
-Strip all comments from a source file (in place by default). Given a directory,
-walk it recursively (honoring .gitignore, skipping hidden dirs) and strip every
-supported source file. --apply and --stdout are file-only.
+Remove plain/narration comments from a source file (in place by default).
+Doc comments (///, /** */), directives (eslint-disable, # noqa, //go:, ...),
+task markers (TODO, FIXME, HACK, XXX, BUG), and the line-1 shebang are KEPT by
+default; opt into removing each with the --strip-* flags below. Given a
+directory, walk it recursively (honoring .gitignore, skipping hidden dirs) and
+process every supported source file. --apply and --stdout are file-only.
 
 Commands:
   install-zed-task     Add a 'rm-comments' task to ~/.config/zed/tasks.json
@@ -22,10 +25,12 @@ Options:
   --check, --dry-run   Report whether changes would be made (exit 1 if so); write nothing
   --stdin              Read source from stdin, write result to stdout (requires --lang)
   --lang <NAME>        Language name or extension (e.g. rust, py) for --stdin
-  --keep-doc-comments  Preserve doc comments (///, //!, /** */); default removes all
-  --keep <REGEX>       Preserve comments matching REGEX (repeatable)
+  --strip-doc-comments Also remove doc comments (///, //!, /** */); kept by default
   --strip-directives   Also remove directive comments (eslint-disable, # noqa,
-                       //go:, ...); they are preserved by default
+                       //go:, ...); kept by default
+  --strip-markers      Also remove task markers (TODO, FIXME, HACK, XXX, BUG);
+                       kept by default
+  --keep <REGEX>       Preserve comments matching REGEX (repeatable)
   --lines <A-B>        Only remove comments within 1-based line range (repeatable)
   --list               Print all comments as JSON (id, span, text, flags); no changes
   --apply <IDS>        Remove exactly these comma-separated comment ids (from
@@ -80,8 +85,9 @@ fn main() {
             "--check" | "--dry-run" => check = true,
             "--stdin" => use_stdin = true,
             "--lang" => lang_name = Some(value("--lang")),
-            "--keep-doc-comments" => opts.keep_doc_comments = true,
+            "--strip-doc-comments" => opts.keep_doc_comments = false,
             "--strip-directives" => opts.keep_directives = false,
+            "--strip-markers" => opts.keep_markers = false,
             "--keep" => {
                 let pat = value("--keep");
                 opts.keep_patterns.push(
@@ -305,7 +311,7 @@ fn comments_json(file: &str, lang: &str, comments: &[rm_comments::Comment]) -> S
         .iter()
         .map(|c| {
             format!(
-                r#"    {{"id": {}, "kind": "{}", "start_line": {}, "end_line": {}, "start_byte": {}, "end_byte": {}, "is_doc": {}, "is_directive": {}, "text": "{}"}}"#,
+                r#"    {{"id": {}, "kind": "{}", "start_line": {}, "end_line": {}, "start_byte": {}, "end_byte": {}, "is_doc": {}, "is_directive": {}, "is_marker": {}, "text": "{}"}}"#,
                 c.id,
                 c.kind,
                 c.start_line,
@@ -314,6 +320,7 @@ fn comments_json(file: &str, lang: &str, comments: &[rm_comments::Comment]) -> S
                 c.end_byte,
                 c.is_doc,
                 c.is_directive,
+                c.is_marker,
                 json_escape(&c.text)
             )
         })

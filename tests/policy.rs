@@ -54,6 +54,36 @@ fn strip_directives_removes_them() {
 }
 
 #[test]
+fn markers_survive_by_default() {
+    let src = "// TODO: x\n// FIXME: y\n// HACK: z\n// XXX\n// BUG: b\n// narration\nfn main() {}\n";
+    assert_eq!(
+        strip_with("rust", src, &Options::default()),
+        "// TODO: x\n// FIXME: y\n// HACK: z\n// XXX\n// BUG: b\nfn main() {}\n"
+    );
+}
+
+#[test]
+fn strip_markers_removes_them() {
+    let src = "// TODO: x\n// narration\nfn main() {}\n";
+    let opts = Options { keep_markers: false, ..Default::default() };
+    assert_eq!(strip_with("rust", src, &opts), "fn main() {}\n");
+}
+
+#[test]
+fn marker_word_boundary_excludes_prose() {
+    // marker substrings inside ordinary words are NOT kept
+    let src = "// todos are hard\n// buggy code\n// hacky\nfn main() {}\n";
+    assert_eq!(strip_with("rust", src, &Options::default()), "fn main() {}\n");
+}
+
+#[test]
+fn marker_match_is_case_insensitive() {
+    let src = "// todo: lower\n// Fixme: mixed\nfn main() {}\n";
+    // both kept -> byte-for-byte identical
+    assert_eq!(strip_with("rust", src, &Options::default()), src);
+}
+
+#[test]
 fn directive_check_is_case_insensitive() {
     let src = "int x; // NOLINT(readability)\n";
     assert_eq!(strip_with("cpp", src, &Options::default()), src);
@@ -68,27 +98,28 @@ fn directive_lookalike_in_plain_prose_is_not_kept() {
 
 #[test]
 fn keep_pattern_preserves_matches() {
-    let src = "// TODO: fix later\n// obvious narration\nfn main() {}\n";
+    // PERF isn't a built-in marker, so this isolates --keep behavior
+    let src = "// PERF: hot path\n// obvious narration\nfn main() {}\n";
     let opts = Options {
-        keep_patterns: vec![regex::Regex::new("TODO|FIXME").unwrap()],
+        keep_patterns: vec![regex::Regex::new("PERF").unwrap()],
         ..Default::default()
     };
-    assert_eq!(strip_with("rust", src, &opts), "// TODO: fix later\nfn main() {}\n");
+    assert_eq!(strip_with("rust", src, &opts), "// PERF: hot path\nfn main() {}\n");
 }
 
 #[test]
 fn multiple_keep_patterns() {
-    let src = "// SAFETY: aligned\n// TODO: later\n// noise\nfn main() {}\n";
+    let src = "// SAFETY: aligned\n// PERF: later\n// noise\nfn main() {}\n";
     let opts = Options {
         keep_patterns: vec![
             regex::Regex::new("^// SAFETY").unwrap(),
-            regex::Regex::new("TODO").unwrap(),
+            regex::Regex::new("PERF").unwrap(),
         ],
         ..Default::default()
     };
     assert_eq!(
         strip_with("rust", src, &opts),
-        "// SAFETY: aligned\n// TODO: later\nfn main() {}\n"
+        "// SAFETY: aligned\n// PERF: later\nfn main() {}\n"
     );
 }
 
@@ -131,16 +162,26 @@ fn list_reports_ids_spans_and_flags() {
     assert_eq!(comments[0].text, "/// doc");
     assert!(comments[0].is_doc);
     assert!(!comments[0].is_directive);
+    assert!(!comments[0].is_marker);
     assert_eq!((comments[0].start_line, comments[0].end_line), (1, 1));
     assert_eq!(comments[0].kind, "line_comment");
 
     assert!(comments[1].is_directive);
+    assert!(!comments[1].is_marker);
     assert_eq!(comments[1].start_line, 3);
 
     assert_eq!(comments[2].text, "// plain");
     assert_eq!(comments[2].start_line, 5);
     // byte span round-trips to the text
     assert_eq!(&src[comments[2].start_byte..comments[2].end_byte], "// plain");
+}
+
+#[test]
+fn list_reports_is_marker() {
+    let src = "// TODO: x\n// plain\nfn main() {}\n";
+    let comments = list_comments(src, lang("rust")).unwrap();
+    assert!(comments[0].is_marker, "TODO not flagged as marker");
+    assert!(!comments[1].is_marker);
 }
 
 #[test]

@@ -1,3 +1,6 @@
+/**
+ * JSDoc block.
+ */
 function main() {
   const url = "https://example.com";
   const s = 'not // a comment';

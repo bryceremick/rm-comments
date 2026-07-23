@@ -41,8 +41,10 @@ Three source files, ~840 lines:
 2. Walk the tree, collect byte ranges of nodes whose kind is in the language's
    `comment_kinds`. The line-1 `#!` shebang is explicitly excluded even if the grammar
    tokenizes it as a comment.
-3. Filter ranges by policy (doc / directive / `--keep` regex / `--lines`), or replace
-   the whole policy with an exact id set when `--apply` is used.
+3. Filter ranges by policy. The default keeps doc comments, directives, task markers, and
+   `--keep`-matched comments — each has a `keep_*` flag defaulting on (`--strip-doc-comments`
+   / `--strip-directives` / `--strip-markers` opt out); `--lines` scopes by range. `--apply`
+   replaces the whole policy with an exact id set.
 4. Mask the removed bytes and call **`rebuild()`** — the single source of truth for
    whitespace cleanup (drop full-comment lines incl. newline, trim gaps before trailing
    comments, collapse blank-line runs around removals to at most one). If you're changing
@@ -55,8 +57,11 @@ presence is preserved. Empty result-set → returns the original string byte-for
 
 - **Never modify a file that doesn't parse cleanly or has an unknown extension.**
 - **Idempotent**: stripping twice == stripping once (asserted in `golden.rs`).
-- **Directives are kept by default** (`DIRECTIVE_PREFIXES` in `lib.rs`) — removing them
-  changes program behavior. `--strip-directives` opts out.
+- **Safety-first defaults: doc comments, directives (`DIRECTIVE_PREFIXES`), and task
+  markers (`MARKER_PREFIXES`: TODO/FIXME/HACK/XXX/BUG) are all kept by default** — a bare
+  run removes only plain narration. Each opts out via `--strip-doc-comments` /
+  `--strip-directives` / `--strip-markers`. Markers match as a whole leading token
+  (word boundary), so `// todos` and `// buggy` are not kept.
 - **`--list` ids are positional** in current file content; they're invalid after any
   edit. `--apply` ignores all keep policies.
 - Exit codes: `0` ok / `1` only for `--check` when changes would be made / `2` error.

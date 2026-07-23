@@ -1,3 +1,4 @@
+/// <summary>XML doc comment.</summary>
 class Program
 {
     static void Main()

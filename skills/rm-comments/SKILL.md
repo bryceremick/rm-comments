@@ -31,7 +31,8 @@ is not obvious from the code.
 - Is a **doc comment on a public API** (`is_doc: true`) that adds information beyond the
   signature. Remove doc comments that merely restate the name
   (`/// Gets the user.` on `get_user()` → remove).
-- Is a **task marker** with content: `TODO`/`FIXME`/`HACK` that names a real follow-up.
+- Is a **task marker** (`is_marker: true` — `TODO`/`FIXME`/`HACK`/`XXX`/`BUG`) naming a
+  real follow-up. **Kept by default; never remove these.**
 
 **REMOVE** a comment if it:
 - **Narrates what the code does**: `// loop over the items`, `// increment counter`,
@@ -54,10 +55,11 @@ removed WHY costs the next reader an investigation.
    ```
 
    Returns JSON: every comment with `id`, `start_line`/`end_line`, `text`, `is_doc`,
-   `is_directive`.
+   `is_directive`, `is_marker`.
 
 2. **Judge** each comment against the policy above. Collect the ids to remove.
    - `is_directive: true` → never select it.
+   - `is_marker: true` → never select it (real follow-up work).
    - `is_doc: true` → select only if it adds nothing beyond the signature.
 
 3. **Apply** exactly those ids (removal is surgical; all other comments survive):
@@ -66,12 +68,13 @@ removed WHY costs the next reader an investigation.
    rm-comments --apply 2,5,7 path/to/file.rs
    ```
 
-   If you decided to remove **every** comment, `rm-comments path/to/file.rs` does the
-   same in one step (directives still survive by default). To clean a whole tree,
-   pass a directory: `rm-comments src/` walks it recursively (honoring `.gitignore`,
-   skipping hidden dirs), stripping every supported file. `--stdout` and `--apply` are
-   file-only; `--list`/`--check` accept a directory (`--list` then emits a JSON array,
-   one object per file).
+   For a bulk pass, `rm-comments path/to/file.rs` removes plain narration comments in one
+   step — doc comments, directives, and task markers are **kept by default** (add
+   `--strip-doc-comments` / `--strip-directives` / `--strip-markers` to remove those too;
+   all three removes every comment). To clean a whole tree, pass a directory:
+   `rm-comments src/` walks it recursively (honoring `.gitignore`, skipping hidden dirs),
+   cleaning every supported file. `--stdout` and `--apply` are file-only; `--list`/`--check`
+   accept a directory (`--list` then emits a JSON array, one object per file).
 
 4. **Verify** — check the diff (`git diff path/to/file.rs`) and confirm the build/tests
    still pass. If `rm-comments` exits with an error, the file was not modified; fix the

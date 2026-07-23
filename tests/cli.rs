@@ -111,11 +111,69 @@ fn stdin_check_exit_codes() {
 }
 
 #[test]
-fn keep_doc_comments_flag() {
+fn doc_comments_kept_by_default() {
     let f = tmpfile("a.rs", "/// doc\n// plain\nfn main() {}\n");
-    let out = run(&["--keep-doc-comments", f.to_str().unwrap()]);
-    assert!(out.status.success());
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
     assert_eq!(fs::read_to_string(&f).unwrap(), "/// doc\nfn main() {}\n");
+}
+
+#[test]
+fn strip_doc_comments_flag_removes_them() {
+    let f = tmpfile("a.rs", "/// doc\n// plain\nfn main() {}\n");
+    let out = run(&["--strip-doc-comments", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "fn main() {}\n");
+}
+
+#[test]
+fn removed_keep_doc_comments_flag_exits_2_untouched() {
+    // the old --keep-doc-comments flag is gone; it's now just an unknown flag
+    let src = "// plain\nfn main() {}\n";
+    let f = tmpfile("a.rs", src);
+    let out = run(&["--keep-doc-comments", f.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&f).unwrap(), src, "file touched on unknown flag");
+}
+
+#[test]
+fn markers_kept_by_default() {
+    let src = "// TODO: later\n// FIXME: bug\n// HACK: x\n// XXX\n// BUG: y\n// narration\nfn main() {}\n";
+    let f = tmpfile("a.rs", src);
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(
+        fs::read_to_string(&f).unwrap(),
+        "// TODO: later\n// FIXME: bug\n// HACK: x\n// XXX\n// BUG: y\nfn main() {}\n"
+    );
+}
+
+#[test]
+fn strip_markers_flag_removes_them() {
+    let f = tmpfile("a.rs", "// TODO: later\n// narration\nfn main() {}\n");
+    let out = run(&["--strip-markers", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "fn main() {}\n");
+}
+
+#[test]
+fn marker_word_boundary_not_matched_in_prose() {
+    // starts with a marker substring but not as a whole token -> removed as narration
+    let f = tmpfile("a.rs", "// todos are hard\n// buggy path\nfn main() {}\n");
+    let out = run(&[f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), "fn main() {}\n");
+}
+
+#[test]
+fn list_reports_is_marker() {
+    let f = tmpfile("a.rs", "// TODO: x\n// plain\nfn main() {}\n");
+    let out = run(&["--list", f.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    let c = v["comments"].as_array().unwrap();
+    assert_eq!(c[0]["is_marker"], true);
+    assert_eq!(c[1]["is_marker"], false);
 }
 
 // --- refusal paths: the file must NEVER be touched ---
@@ -211,10 +269,11 @@ fn permissions_preserved() {
 
 #[test]
 fn keep_flag_preserves_matches() {
-    let f = tmpfile("a.rs", "// TODO: later\n// noise\nfn main() {}\n");
-    let out = run(&["--keep", "TODO", f.to_str().unwrap()]);
+    // PERF isn't a built-in marker, so this isolates --keep behavior
+    let f = tmpfile("a.rs", "// PERF: hot\n// noise\nfn main() {}\n");
+    let out = run(&["--keep", "PERF", f.to_str().unwrap()]);
     assert!(out.status.success(), "stderr: {:?}", out.stderr);
-    assert_eq!(fs::read_to_string(&f).unwrap(), "// TODO: later\nfn main() {}\n");
+    assert_eq!(fs::read_to_string(&f).unwrap(), "// PERF: hot\nfn main() {}\n");
 }
 
 #[test]
@@ -757,21 +816,41 @@ fn dir_apply_exits_2_untouched() {
 // --- options propagate per file ---
 
 #[test]
-fn dir_keep_doc_comments() {
+fn dir_doc_comments_kept_by_default() {
     let d = tmpdir();
     let a = write_in(&d, "a.rs", "/// doc\n// plain\nfn f() {}\n");
     let b = write_in(&d, "sub/b.rs", "/// doc\n// plain\nfn g() {}\n");
-    assert!(run(&["--keep-doc-comments", d.to_str().unwrap()]).status.success());
+    assert!(run(&[d.to_str().unwrap()]).status.success());
     assert_eq!(fs::read_to_string(&a).unwrap(), "/// doc\nfn f() {}\n");
     assert_eq!(fs::read_to_string(&b).unwrap(), "/// doc\nfn g() {}\n");
 }
 
 #[test]
-fn dir_keep_pattern() {
+fn dir_strip_doc_comments() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "/// doc\n// plain\nfn f() {}\n");
+    let b = write_in(&d, "sub/b.rs", "/// doc\n// plain\nfn g() {}\n");
+    assert!(run(&["--strip-doc-comments", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "fn f() {}\n");
+    assert_eq!(fs::read_to_string(&b).unwrap(), "fn g() {}\n");
+}
+
+#[test]
+fn dir_markers_kept_by_default_stripped_on_request() {
     let d = tmpdir();
     let a = write_in(&d, "a.rs", "// TODO: later\n// noise\nfn f() {}\n");
-    assert!(run(&["--keep", "TODO", d.to_str().unwrap()]).status.success());
-    assert_eq!(fs::read_to_string(&a).unwrap(), "// TODO: later\nfn f() {}\n");
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "// TODO: later\nfn f() {}\n", "marker stripped by default");
+    assert!(run(&["--strip-markers", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "fn f() {}\n");
+}
+
+#[test]
+fn dir_keep_pattern() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "// PERF: hot\n// noise\nfn f() {}\n");
+    assert!(run(&["--keep", "PERF", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "// PERF: hot\nfn f() {}\n");
 }
 
 #[test]

@@ -79,20 +79,31 @@ These plugins do not include the binary, only a skill instructing your agent on 
 
 ## Basic Usage
 
+Individual files:
 ```sh
 rm-comments src/main.rs
 ```
+
+Directories:
+```sh
+rm-comments src/
+```
+
+## Default Behavior
 
 **Before:**
 
 ```rust
 /// Loads the configuration from the given path.
 fn load(path: &Path) -> Config {
+    // TODO: validate the path exists before reading
+
     // First, read the contents of the file into a string.
     let s = read(path); // read the file
     /* Now that we have the string, we can parse it.
        The parse function takes the string and a key. */
     let cfg = parse(&s, "key // not a comment");
+    
     // Finally, return the parsed configuration.
     cfg
 }
@@ -101,18 +112,15 @@ fn load(path: &Path) -> Config {
 **After:**
 
 ```rust
+/// Loads the configuration from the given path.
 fn load(path: &Path) -> Config {
+    // TODO: validate the path exists before reading
     let s = read(path);
     let cfg = parse(&s, "key // not a comment");
     cfg
 }
 ```
 
-OR point it at a directory to clean a whole tree at once:
-
-```sh
-rm-comments src/
-```
 
 ## Command reference
 
@@ -128,9 +136,10 @@ rm-comments install-zed-task                  # add the Zed editor task
 | `--check`, `--dry-run` | Report only; exit 1 if changes would be made, 0 if clean |
 | `--stdin` | Read source from stdin, write to stdout; requires `--lang` |
 | `--lang <NAME>` | Language name or extension for `--stdin` (e.g. `rust`, `py`) |
-| `--keep-doc-comments` | Preserve `///`, `//!`, `/*!`, `/** */` doc comments |
+| `--strip-doc-comments` | Also remove doc comments (`///`, `//!`, `/*!`, `/** */`); kept by default |
+| `--strip-directives` | Also remove directive comments (`eslint-disable`, `# noqa`, …); kept by default |
+| `--strip-markers` | Also remove task markers (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`); kept by default |
 | `--keep <REGEX>` | Preserve comments matching REGEX (repeatable) |
-| `--strip-directives` | Also remove directive comments (kept by default) |
 | `--lines <A-B>` | Restrict removal to a 1-based line range (repeatable; `N` = single line) |
 | `--list` | Print every comment as JSON; modifies nothing |
 | `--apply <IDS>` | Remove exactly these comma-separated `--list` ids; ignores keep policies (file only) |
@@ -152,8 +161,8 @@ rm-comments src/
 # Preview without writing — CI/pre-commit friendly (exit 1 if anything would change)
 rm-comments --check src/
 
-# Strip but keep doc comments and any TODO/FIXME markers
-rm-comments --keep-doc-comments --keep 'TODO|FIXME' src/lib.rs
+# Remove EVERYTHING, including docs, directives, and markers
+rm-comments --strip-doc-comments --strip-directives --strip-markers src/lib.rs
 
 # Only touch the region you just edited
 rm-comments --lines 40-80 src/handler.rs
@@ -171,10 +180,11 @@ rm-comments --apply 2,5,7 src/main.rs          # remove ids 2, 5, 7 only
 - **Safety** — files that fail to parse are never modified; writes are atomic; line
   endings, shebang lines, and all non-comment content are preserved exactly. Running
   the tool twice produces the same result as running it once.
-- **Flexibility** — remove everything, or retain by category: directive comments
-  (`eslint-disable`, `# noqa`, `//go:generate`, and similar) are preserved by default
-  since removing them changes program behavior; doc comments, user-defined patterns,
-  and specific line ranges can each be controlled by flag.
+- **Selective removal** — a bare run removes only plain narration comments. Doc
+  comments, directives (`eslint-disable`, `# noqa`, `//go:generate`, …), and task markers
+  (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`) are all kept unless you opt into removing them
+  with `--strip-doc-comments` / `--strip-directives` / `--strip-markers`. User-defined
+  `--keep` patterns and `--lines` scoping add further control.
 - **LLM integration** — this repo also ships a plugin whose skill
   ([`SKILL.md`](skills/rm-comments/SKILL.md)) applies a defined policy: comments that
   explain rationale or constraints are kept, comments that narrate what the code
@@ -195,9 +205,10 @@ rm-comments --apply 2,5,7 src/main.rs          # remove ids 2, 5, 7 only
   most one blank line. The whole policy lives in one function (`rebuild()` in `src/lib.rs`).
 - Python docstrings are string expression statements in the grammar — they are **correctly
   left in place**. Only `#` comments are removed in Python files. By design, not a bug.
-- Doc comments that grammars represent as comment nodes (Rust `///`/`//!`, JSDoc/Javadoc
-  `/** */`, Doxygen `/*!`) are removed by default — "all comments" means all. Pass
-  `--keep-doc-comments` to preserve them.
+- Doc comments (Rust `///`/`//!`, JSDoc/Javadoc `/** */`, Doxygen `/*!`), directives, and
+  task markers are **kept by default** — a bare run can't silently delete a `///` doc or a
+  `// TODO`. Pass `--strip-doc-comments` / `--strip-directives` / `--strip-markers` to
+  remove a category.
 
 ## Supported languages
 
