@@ -29,7 +29,10 @@ Three source files, ~840 lines:
 - **`src/languages.rs`** — the `LANGUAGES` registry: extension → grammar → comment
   node kinds. This is the only file you touch to add a language.
 - **`src/main.rs`** — arg parsing, stdin/file/stdout plumbing, `--list` JSON emission
-  (hand-rolled, no serde), atomic writes, and `install-zed-task`.
+  (hand-rolled, no serde), atomic writes, and `install-zed-task`. Directory support lives
+  here too: `process_one()` handles a single file and `run_dir()` walks a directory (via
+  the `ignore` crate, honoring `.gitignore` + skipping hidden dirs), calling `process_one`
+  per supported file. The library is untouched by directory mode.
 
 ### How stripping works (the important flow)
 

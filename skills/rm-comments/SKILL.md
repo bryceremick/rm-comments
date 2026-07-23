@@ -67,7 +67,11 @@ removed WHY costs the next reader an investigation.
    ```
 
    If you decided to remove **every** comment, `rm-comments path/to/file.rs` does the
-   same in one step (directives still survive by default).
+   same in one step (directives still survive by default). To clean a whole tree,
+   pass a directory: `rm-comments src/` walks it recursively (honoring `.gitignore`,
+   skipping hidden dirs), stripping every supported file. `--stdout` and `--apply` are
+   file-only; `--list`/`--check` accept a directory (`--list` then emits a JSON array,
+   one object per file).
 
 4. **Verify** — check the diff (`git diff path/to/file.rs`) and confirm the build/tests
    still pass. If `rm-comments` exits with an error, the file was not modified; fix the

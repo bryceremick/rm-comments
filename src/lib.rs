@@ -13,6 +13,9 @@ pub struct Options {
     /// Preserve directive comments (`eslint-disable`, `# noqa`, `//go:`, ...).
     /// On by default: removing these changes program behavior.
     pub keep_directives: bool,
+    /// Preserve task-marker comments (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`).
+    /// On by default: they flag real follow-up work worth keeping.
+    pub keep_markers: bool,
     /// Preserve comments whose text matches any of these patterns.
     pub keep_patterns: Vec<regex::Regex>,
     /// 1-based inclusive line ranges; when non-empty, only comments

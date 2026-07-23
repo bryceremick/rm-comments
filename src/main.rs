@@ -5,11 +5,13 @@ use std::process::exit;
 use rm_comments::{languages, list_comments, strip_comments, Options};
 
 const USAGE: &str = "\
-Usage: rm-comments [OPTIONS] <FILE>
+Usage: rm-comments [OPTIONS] <FILE|DIR>
        rm-comments [OPTIONS] --stdin --lang <NAME>
        rm-comments install-zed-task
 
-Strip all comments from a source file (in place by default).
+Strip all comments from a source file (in place by default). Given a directory,
+walk it recursively (honoring .gitignore, skipping hidden dirs) and strip every
+supported source file. --apply and --stdout are file-only.
 
 Commands:
   install-zed-task     Add a 'rm-comments' task to ~/.config/zed/tasks.json
@@ -113,7 +115,8 @@ fn main() {
         }
     }
 
-    let (src, lang, display): (String, &languages::Lang, String) = if use_stdin {
+    // stdin is its own input source; it can never be a directory.
+    if use_stdin {
         let lang_name = lang_name.unwrap_or_else(|| die("--stdin requires --lang <NAME>"));
         let lang = languages::by_name(&lang_name)
             .unwrap_or_else(|| die(&format!("unknown language '{lang_name}'")));
@@ -121,48 +124,164 @@ fn main() {
         std::io::stdin()
             .read_to_string(&mut src)
             .unwrap_or_else(|e| die(&format!("reading stdin: {e}")));
-        (src, lang, "<stdin>".to_string())
-    } else {
-        let path = file.clone().unwrap_or_else(|| die(&format!("no file given\n{USAGE}")));
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or_else(|| die(&format!("{}: no file extension", path.display())));
-        let lang = languages::by_extension(ext).unwrap_or_else(|| {
-            die(&format!(
-                "{}: unsupported extension '.{ext}' (file left untouched)",
-                path.display()
-            ))
-        });
-        let src = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
-        let display = path.display().to_string();
-        (src, lang, display)
-    };
-
-    if list {
-        let comments = list_comments(&src, lang).unwrap_or_else(|e| die(&format!("{display}: {e}")));
-        print!("{}", comments_json(&display, lang.name, &comments));
-        return;
-    }
-
-    let out = strip_comments(&src, lang, &opts).unwrap_or_else(|e| die(&format!("{display}: {e}")));
-
-    if check {
-        if out != src {
-            println!("{display}: would remove comments");
-            exit(1);
+        if list {
+            let comments =
+                list_comments(&src, lang).unwrap_or_else(|e| die(&format!("<stdin>: {e}")));
+            print!("{}", comments_json("<stdin>", lang.name, &comments));
+            return;
         }
-        exit(0);
-    }
-    if to_stdout || use_stdin {
+        let out =
+            strip_comments(&src, lang, &opts).unwrap_or_else(|e| die(&format!("<stdin>: {e}")));
+        if check {
+            if out != src {
+                println!("<stdin>: would remove comments");
+                exit(1);
+            }
+            exit(0);
+        }
         print!("{out}");
         return;
     }
-    if out != src {
-        let path = file.unwrap();
-        write_atomic(&path, &out).unwrap_or_else(|e| die(&format!("{}: {e}", path.display())));
+
+    let path = file.unwrap_or_else(|| die(&format!("no file given\n{USAGE}")));
+    let mode = if list {
+        Mode::List
+    } else if check {
+        Mode::Check
+    } else if to_stdout {
+        Mode::Stdout
+    } else {
+        Mode::Write
+    };
+
+    if path.is_dir() {
+        // Per-file positional ids / a single output stream have no meaning across many files.
+        if to_stdout {
+            die("--stdout is not supported for a directory");
+        }
+        if opts.only_ids.is_some() {
+            die("--apply is not supported for a directory");
+        }
+        run_dir(&path, &opts, mode);
     }
+
+    match process_one(&path, &opts, mode) {
+        Ok(out) => match mode {
+            Mode::List => print!("{}", out.list_json.unwrap()),
+            Mode::Check => {
+                if out.changed {
+                    println!("{}: would remove comments", path.display());
+                    exit(1);
+                }
+                exit(0);
+            }
+            Mode::Stdout | Mode::Write => {}
+        },
+        Err(e) => die(&format!("{}: {e}", path.display())),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Mode {
+    Write,
+    Check,
+    Stdout,
+    List,
+}
+
+struct Outcome {
+    changed: bool,
+    list_json: Option<String>,
+}
+
+/// Process a single file: resolve its language, read it, and act per `mode`.
+/// Returns an error string (never dies) so directory mode can skip-and-continue;
+/// callers own the exit-code / message policy. Only `Write` touches the file.
+fn process_one(path: &Path, opts: &Options, mode: Mode) -> Result<Outcome, String> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| "no file extension".to_string())?;
+    let lang = languages::by_extension(ext)
+        .ok_or_else(|| format!("unsupported extension '.{ext}' (file left untouched)"))?;
+    let src = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    if let Mode::List = mode {
+        let comments = list_comments(&src, lang).map_err(|e| e.to_string())?;
+        let json = comments_json(&path.display().to_string(), lang.name, &comments);
+        return Ok(Outcome { changed: false, list_json: Some(json) });
+    }
+
+    let out = strip_comments(&src, lang, opts).map_err(|e| e.to_string())?;
+    let changed = out != src;
+    match mode {
+        Mode::Stdout => print!("{out}"),
+        Mode::Write if changed => write_atomic(path, &out).map_err(|e| e.to_string())?,
+        _ => {}
+    }
+    Ok(Outcome { changed, list_json: None })
+}
+
+/// Walk a directory (honoring .gitignore, skipping hidden dirs) and run every
+/// supported source file through `process_one`. Unknown extensions are silently
+/// skipped; a file that errors (unreadable, doesn't parse) is left untouched,
+/// reported to stderr, and does not abort the rest of the walk.
+fn run_dir(dir: &Path, opts: &Options, mode: Mode) -> ! {
+    let mut any_changed = false;
+    let mut had_error = false;
+    let mut list_items: Vec<String> = Vec::new();
+
+    for result in ignore::WalkBuilder::new(dir)
+        .sort_by_file_name(|a, b| a.cmp(b))
+        .build()
+    {
+        let entry = match result {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("rm-comments: {e}");
+                had_error = true;
+                continue;
+            }
+        };
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let p = entry.path();
+        match p.extension().and_then(|e| e.to_str()) {
+            Some(ext) if languages::by_extension(ext).is_some() => {}
+            _ => continue, // unknown/no extension: not ours to touch
+        }
+        match process_one(p, opts, mode) {
+            Ok(o) => {
+                if o.changed {
+                    any_changed = true;
+                    if let Mode::Check = mode {
+                        println!("{}: would remove comments", p.display());
+                    }
+                }
+                if let Some(j) = o.list_json {
+                    list_items.push(j.trim_end().to_string());
+                }
+            }
+            Err(e) => {
+                eprintln!("rm-comments: {}: {e}", p.display());
+                had_error = true;
+            }
+        }
+    }
+
+    if let Mode::List = mode {
+        print!("[\n{}\n]\n", list_items.join(",\n"));
+    }
+    if had_error {
+        exit(2);
+    }
+    if let Mode::Check = mode
+        && any_changed
+    {
+        exit(1);
+    }
+    exit(0);
 }
 
 fn json_escape(s: &str) -> String {

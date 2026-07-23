@@ -480,3 +480,389 @@ fn running_twice_is_idempotent() {
     assert!(run(&[f.to_str().unwrap()]).status.success());
     assert_eq!(fs::read_to_string(&f).unwrap(), once);
 }
+
+// ===================================================================
+// Directory mode: `rm-comments <DIR>` walks the tree (honoring
+// .gitignore, skipping hidden dirs) and strips every supported file.
+// ===================================================================
+
+use std::path::Path;
+
+/// Fresh unique empty temp dir; caller populates it.
+fn tmpdir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "sc-cli-dir-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Write `dir/rel` (creating parent dirs); returns the path.
+fn write_in(dir: &Path, rel: &str, contents: &str) -> PathBuf {
+    let path = dir.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, contents).unwrap();
+    path
+}
+
+/// `git init` the dir so .gitignore is honored (the ignore crate needs a
+/// real repo). Returns false if git isn't available so callers can skip.
+fn git_init(dir: &Path) -> bool {
+    Command::new("git")
+        .args(["init", "-q"])
+        .arg(dir)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Every file under `dir`, recursively (test-side walk, no gitignore logic).
+fn all_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            out.extend(all_files(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
+
+// --- traversal & stripping ---
+
+#[test]
+fn dir_strips_all_supported_files() {
+    let d = tmpdir();
+    let rs = write_in(&d, "a.rs", DIRTY);
+    let py = write_in(&d, "b.py", "# c\nx = 1\n");
+    let ts = write_in(&d, "c.ts", "// c\nconst x = 1;\n");
+    let out = run(&[d.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&rs).unwrap(), CLEAN);
+    assert_eq!(fs::read_to_string(&py).unwrap(), "x = 1\n");
+    assert_eq!(fs::read_to_string(&ts).unwrap(), "const x = 1;\n");
+}
+
+#[test]
+fn dir_recurses_into_subdirs() {
+    let d = tmpdir();
+    let root = write_in(&d, "a.rs", DIRTY);
+    let one = write_in(&d, "sub/b.rs", DIRTY);
+    let two = write_in(&d, "sub/deep/c.rs", DIRTY);
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    for f in [&root, &one, &two] {
+        assert_eq!(fs::read_to_string(f).unwrap(), CLEAN, "{}", f.display());
+    }
+}
+
+#[test]
+fn dir_skips_unknown_extensions() {
+    let d = tmpdir();
+    let rs = write_in(&d, "a.rs", DIRTY);
+    let txt = write_in(&d, "keep.txt", "// not stripped\nhi\n");
+    let json = write_in(&d, "data.json", "{\n  \"a\": 1\n}\n");
+    let mk = write_in(&d, "Makefile", "# c\nall:\n");
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&rs).unwrap(), CLEAN);
+    assert_eq!(fs::read_to_string(&txt).unwrap(), "// not stripped\nhi\n");
+    assert_eq!(fs::read_to_string(&json).unwrap(), "{\n  \"a\": 1\n}\n");
+    assert_eq!(fs::read_to_string(&mk).unwrap(), "# c\nall:\n");
+}
+
+#[test]
+fn dir_mixed_languages_each_uses_own_grammar() {
+    let d = tmpdir();
+    let rs = write_in(&d, "r.rs", "// c\nfn a() {}\n");
+    let py = write_in(&d, "p.py", "# c\nx = 1\n");
+    let go = write_in(&d, "g.go", "package main\n\n// c\nfunc a() {}\n");
+    let css = write_in(&d, "s.css", "/* c */\na { color: red; }\n");
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    let (rs, py, go, css) = (
+        fs::read_to_string(&rs).unwrap(),
+        fs::read_to_string(&py).unwrap(),
+        fs::read_to_string(&go).unwrap(),
+        fs::read_to_string(&css).unwrap(),
+    );
+    assert!(!rs.contains("// c") && rs.contains("fn a"), "rust: {rs:?}");
+    assert!(!py.contains("# c") && py.contains("x = 1"), "py: {py:?}");
+    assert!(!go.contains("// c") && go.contains("func a"), "go: {go:?}");
+    assert!(!css.contains("/* c */") && css.contains("color"), "css: {css:?}");
+}
+
+#[test]
+fn dir_empty_dir_is_noop_exit_0() {
+    let d = tmpdir();
+    let out = run(&[d.to_str().unwrap()]);
+    assert!(out.status.success());
+    assert!(all_files(&d).is_empty());
+}
+
+#[test]
+fn dir_already_clean_is_noop_exit_0() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", CLEAN);
+    let b = write_in(&d, "sub/b.rs", CLEAN);
+    let out = run(&[d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(fs::read_to_string(&a).unwrap(), CLEAN);
+    assert_eq!(fs::read_to_string(&b).unwrap(), CLEAN);
+}
+
+// --- .gitignore / hidden ---
+
+#[test]
+fn dir_respects_gitignore() {
+    let d = tmpdir();
+    if !git_init(&d) {
+        eprintln!("git unavailable; skipping dir_respects_gitignore");
+        return;
+    }
+    write_in(&d, ".gitignore", "skip/\n*.gen.rs\n");
+    let plain = write_in(&d, "a.rs", DIRTY);
+    let ignored_dir = write_in(&d, "skip/z.rs", DIRTY);
+    let ignored_glob = write_in(&d, "root.gen.rs", DIRTY);
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&plain).unwrap(), CLEAN);
+    assert_eq!(fs::read_to_string(&ignored_dir).unwrap(), DIRTY, "gitignored dir touched");
+    assert_eq!(fs::read_to_string(&ignored_glob).unwrap(), DIRTY, "gitignored glob touched");
+}
+
+#[test]
+fn dir_skips_hidden_dirs() {
+    let d = tmpdir();
+    let plain = write_in(&d, "a.rs", DIRTY);
+    let in_git = write_in(&d, ".git/x.rs", DIRTY);
+    let in_hidden = write_in(&d, ".hidden/y.rs", DIRTY);
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&plain).unwrap(), CLEAN);
+    assert_eq!(fs::read_to_string(&in_git).unwrap(), DIRTY, "hidden .git touched");
+    assert_eq!(fs::read_to_string(&in_hidden).unwrap(), DIRTY, "hidden dir touched");
+}
+
+#[test]
+fn dir_nested_gitignore() {
+    let d = tmpdir();
+    if !git_init(&d) {
+        eprintln!("git unavailable; skipping dir_nested_gitignore");
+        return;
+    }
+    write_in(&d, "sub/.gitignore", "local.rs\n");
+    let local = write_in(&d, "sub/local.rs", DIRTY);
+    let other = write_in(&d, "sub/other.rs", DIRTY);
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&local).unwrap(), DIRTY, "nested-gitignored file touched");
+    assert_eq!(fs::read_to_string(&other).unwrap(), CLEAN);
+}
+
+// --- --check on a directory ---
+
+#[test]
+fn dir_check_any_dirty_exits_1_no_writes() {
+    let d = tmpdir();
+    let dirty = write_in(&d, "a.rs", DIRTY);
+    let clean = write_in(&d, "b.rs", CLEAN);
+    let out = run(&["--check", d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(&dirty).unwrap(), DIRTY, "check wrote to file");
+    assert_eq!(fs::read_to_string(&clean).unwrap(), CLEAN);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("a.rs"), "dirty file not named");
+}
+
+#[test]
+fn dir_check_all_clean_exits_0() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", CLEAN);
+    write_in(&d, "sub/b.py", "x = 1\n");
+    let out = run(&["--check", d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+}
+
+#[test]
+fn dir_dry_run_alias() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", DIRTY);
+    let out = run(&["--dry-run", d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+}
+
+// --- --list on a directory ---
+
+#[test]
+fn dir_list_emits_json_array() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "// c\nfn f() {}\n");
+    write_in(&d, "b.py", "# c\nx = 1\n");
+    let out = run(&["--list", d.to_str().unwrap()]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&a).unwrap(), "// c\nfn f() {}\n", "--list modified a file");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("invalid JSON");
+    let arr = v.as_array().expect("top level must be an array");
+    assert_eq!(arr.len(), 2);
+    for obj in arr {
+        assert!(obj["language"].is_string());
+        assert!(obj["comments"].is_array());
+    }
+}
+
+#[test]
+fn dir_list_ids_are_per_file() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", "// zero\n// one\nfn f() {}\n");
+    write_in(&d, "b.rs", "// zero\n// one\nfn g() {}\n");
+    let out = run(&["--list", d.to_str().unwrap()]);
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    for obj in v.as_array().unwrap() {
+        let comments = obj["comments"].as_array().unwrap();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0]["id"], 0, "ids must restart per file");
+        assert_eq!(comments[1]["id"], 1);
+    }
+}
+
+#[test]
+fn dir_list_deterministic_order() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", "// c\nfn a() {}\n");
+    write_in(&d, "m.rs", "// c\nfn m() {}\n");
+    write_in(&d, "z.rs", "// c\nfn z() {}\n");
+    let first = run(&["--list", d.to_str().unwrap()]).stdout;
+    let second = run(&["--list", d.to_str().unwrap()]).stdout;
+    assert_eq!(first, second, "--list output not deterministic");
+}
+
+// --- flag rejections on a directory ---
+
+#[test]
+fn dir_stdout_exits_2_untouched() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", DIRTY);
+    let out = run(&["--stdout", d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&a).unwrap(), DIRTY);
+}
+
+#[test]
+fn dir_apply_exits_2_untouched() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", DIRTY);
+    let out = run(&["--apply", "0", d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&a).unwrap(), DIRTY);
+}
+
+// --- options propagate per file ---
+
+#[test]
+fn dir_keep_doc_comments() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "/// doc\n// plain\nfn f() {}\n");
+    let b = write_in(&d, "sub/b.rs", "/// doc\n// plain\nfn g() {}\n");
+    assert!(run(&["--keep-doc-comments", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "/// doc\nfn f() {}\n");
+    assert_eq!(fs::read_to_string(&b).unwrap(), "/// doc\nfn g() {}\n");
+}
+
+#[test]
+fn dir_keep_pattern() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "// TODO: later\n// noise\nfn f() {}\n");
+    assert!(run(&["--keep", "TODO", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "// TODO: later\nfn f() {}\n");
+}
+
+#[test]
+fn dir_strip_directives() {
+    let d = tmpdir();
+    let src = "// eslint-disable-next-line\nconsole.log(1);\n";
+    let a = write_in(&d, "a.js", src);
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), src, "directive stripped by default");
+    assert!(run(&["--strip-directives", d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "console.log(1);\n");
+}
+
+// --- error resilience & never-corrupt ---
+
+#[test]
+fn dir_bad_file_skipped_others_processed() {
+    let d = tmpdir();
+    let bad_src = "// c\nfn main( { ][ not rust\n";
+    let bad = write_in(&d, "bad.rs", bad_src);
+    let good = write_in(&d, "good.rs", DIRTY);
+    let ok = write_in(&d, "sub/ok.py", "# c\nx = 1\n");
+    let out = run(&[d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2), "any error -> exit 2");
+    assert_eq!(fs::read_to_string(&bad).unwrap(), bad_src, "bad file corrupted");
+    assert_eq!(fs::read_to_string(&good).unwrap(), CLEAN, "good file not processed");
+    assert_eq!(fs::read_to_string(&ok).unwrap(), "x = 1\n");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("bad.rs"), "bad file not reported");
+}
+
+#[test]
+fn dir_non_utf8_file_skipped() {
+    let d = tmpdir();
+    let bin = d.join("bin.rs");
+    fs::write(&bin, [0xff, 0xfe, b'/', b'/', b'x']).unwrap();
+    let good = write_in(&d, "a.rs", DIRTY);
+    let out = run(&[d.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read(&bin).unwrap(), [0xff, 0xfe, b'/', b'/', b'x'], "binary corrupted");
+    assert_eq!(fs::read_to_string(&good).unwrap(), CLEAN);
+}
+
+#[test]
+fn dir_no_temp_files_left_behind() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", DIRTY);
+    write_in(&d, "sub/b.rs", DIRTY);
+    write_in(&d, "sub/deep/c.py", "# c\nx = 1\n");
+    run(&[d.to_str().unwrap()]);
+    let leftovers: Vec<_> = all_files(&d)
+        .into_iter()
+        .filter(|p| p.to_string_lossy().contains("sc-tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+}
+
+#[test]
+fn dir_idempotent() {
+    let d = tmpdir();
+    write_in(&d, "a.rs", DIRTY);
+    write_in(&d, "sub/b.py", "# c\nx = 1\n");
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    let snapshot: Vec<(PathBuf, String)> = all_files(&d)
+        .into_iter()
+        .map(|p| {
+            let s = fs::read_to_string(&p).unwrap();
+            (p, s)
+        })
+        .collect();
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    for (p, before) in snapshot {
+        assert_eq!(fs::read_to_string(&p).unwrap(), before, "{} changed on 2nd run", p.display());
+    }
+}
+
+#[test]
+fn dir_crlf_preserved() {
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", "// c\r\nfn main() {}\r\n");
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    assert_eq!(fs::read_to_string(&a).unwrap(), "fn main() {}\r\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn dir_permissions_preserved() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tmpdir();
+    let a = write_in(&d, "a.rs", DIRTY);
+    fs::set_permissions(&a, fs::Permissions::from_mode(0o754)).unwrap();
+    assert!(run(&[d.to_str().unwrap()]).status.success());
+    let mode = fs::metadata(&a).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o754);
+}

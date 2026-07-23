@@ -14,6 +14,7 @@ pkg-url = "{ repo }/releases/download/v{ version }/rm-comments-v{ version }-{ ta
 pkg-fmt = "tgz"
 
 [dependencies]
+ignore = "0.4.31"
 regex = "1.13.1"
 tree-sitter = "0.26.11"
 tree-sitter-bash = "0.25.1"

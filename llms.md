@@ -26,9 +26,19 @@ cargo binstall rm-comments                 # prebuilt, needs cargo-binstall
 
 ```
 rm-comments [OPTIONS] <FILE>                 # strip in place (atomic write)
+rm-comments [OPTIONS] <DIR>                  # walk the tree, strip every supported file
 rm-comments [OPTIONS] --stdin --lang <NAME>  # stdin -> stdout; NAME = language name or extension
 rm-comments install-zed-task                 # add a Zed editor task (not agent-relevant)
 ```
+
+Given a directory, `rm-comments` walks it recursively, honoring `.gitignore` and
+skipping hidden dirs (so `node_modules`, `target`, `.git`, etc. are left alone). Files
+with unsupported extensions are silently skipped; a file that can't be read or parsed is
+left untouched, reported to stderr, and does not stop the rest of the walk. `--check`
+and `--list` work on a directory; `--stdout` and `--apply` are **file-only** (they exit
+2 on a directory, since their per-file positional ids / single stream have no meaning
+across many files). On a directory, exit `2` means at least one file errored (the others
+were still processed); `--check` exits `1` if any file would change.
 
 | Flag | Effect |
 |---|---|
@@ -65,6 +75,9 @@ exit except `--check`'s 1, the file was not modified.**
   `# shellcheck`, `# type: ignore`, ...). Removing these changes program behavior.
 - A `#!` shebang on line 1 is never listed and never removable.
 
+On a directory, `--list` emits a JSON **array** of these objects, one per supported
+file; ids restart at 0 within each file.
+
 **Ids are positions in the current file content. Re-run `--list` after ANY edit to
 the file; never reuse ids across modifications.**
 
@@ -79,6 +92,7 @@ the file; never reuse ids across modifications.**
 
 To remove every comment (directives still survive): `rm-comments <file>`.
 To clean only a region you just wrote: `rm-comments --lines 40-80 <file>`.
+To clean an entire tree at once (honors `.gitignore`, skips hidden dirs): `rm-comments <dir>`.
 
 ## Judgment policy: keep WHY, remove WHAT
 
@@ -108,7 +122,8 @@ selecting ids.
 
 Detected by extension (case-insensitive): rs; js/jsx/mjs/cjs; ts/mts/cts; tsx;
 py/pyi; go; java; c/h; cpp/cc/cxx/hpp/hh/hxx; cs; rb/rake/gemspec; php; html/htm;
-css; sh/bash/zsh; yml/yaml; toml.
+css; sh/bash/zsh; yml/yaml; toml. The authoritative list is the `LANGUAGES` registry
+in [`src/languages.rs`](src/languages.rs).
 
 Notes:
 - Python docstrings are string expressions, not comments — they are always preserved.
