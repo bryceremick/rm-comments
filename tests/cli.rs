@@ -36,12 +36,16 @@ fn run_stdin(args: &[&str], input: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(input.as_bytes())
-        .unwrap();
+    // The child may exit before consuming stdin (e.g. an invalid --lang exits 2
+    // before reading), which races the write into a BrokenPipe. That's expected
+    // here — the test asserts on exit code/output — so only a real write error fails.
+    let mut stdin = child.stdin.take().unwrap();
+    match stdin.write_all(input.as_bytes()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(e) => panic!("writing to child stdin: {e}"),
+    }
+    drop(stdin);
     child.wait_with_output().unwrap()
 }
 
