@@ -95,7 +95,10 @@ jobs:
              | jq -e --arg v "$V" '.versions[] | select(.num == $v)' >/dev/null; then
             echo "version $V already on crates.io — skipping"
           else
-            cargo publish
+            # --allow-dirty: a fresh CI checkout can only be "dirty" from
+            # cargo regenerating Cargo.lock (e.g. after a version bump that
+            # didn't update the lockfile); never from real uncommitted work
+            cargo publish --allow-dirty
           fi
 
   homebrew:
