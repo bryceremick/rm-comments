@@ -26,6 +26,13 @@ jobs:
             echo "::error::Cargo.toml version ($V) != .claude-plugin/plugin.json version ($P) — keep them in sync"
             exit 1
           fi
+          # Cargo.lock records this crate's own version; if a bump forgot to
+          # sync it, cargo publish would fail late on a "dirty" checkout.
+          # Fail fast here with a clear message instead.
+          if ! grep -A1 '^name = "rm-comments"$' Cargo.lock | grep -q "version = \"$V\""; then
+            echo "::error::Cargo.lock is out of sync with Cargo.toml ($V) — run 'cargo check' locally and commit Cargo.lock"
+            exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
   build:
@@ -95,10 +102,7 @@ jobs:
              | jq -e --arg v "$V" '.versions[] | select(.num == $v)' >/dev/null; then
             echo "version $V already on crates.io — skipping"
           else
-            # --allow-dirty: a fresh CI checkout can only be "dirty" from
-            # cargo regenerating Cargo.lock (e.g. after a version bump that
-            # didn't update the lockfile); never from real uncommitted work
-            cargo publish --allow-dirty
+            cargo publish
           fi
 
   homebrew:
