@@ -5,13 +5,18 @@
 
 ## Overview
 
-`rm-comments` is a command-line tool that removes comments from source code. Files
-are parsed with [tree-sitter](https://tree-sitter.github.io) rather than matched with
-regular expressions, so removal is grounded in the language's actual syntax:
-comment-like sequences inside string literals, regular expressions, and docstrings
+`rm-comments` is a cli tool that quickly and safely removes comments from source code files.
+
+Files are parsed using the [tree-sitter](https://tree-sitter.github.io) crate rather than matched with
+regular expressions, so removal is done using the language's actual syntax.
+
+Comment-like sequences inside string literals, regular expressions, and docstrings
 are never affected, and everything that is not a comment is preserved byte for byte.
 
-## Example
+The tool also ships with a rich set of arguments/options that provide granular control over exactly what comments
+are removed or kept from source files. 
+
+## Basic Usage
 
 ```sh
 rm-comments src/main.rs
@@ -61,34 +66,9 @@ fn load(path: &Path) -> Config {
   line-range scoping, and a dry-run mode with conventional exit codes for CI and
   pre-commit use.
 
-## Usage
+## Installation Methods
 
-```sh
-rm-comments --check src/main.rs          # report whether changes would be made
-rm-comments --keep 'TODO|FIXME' lib.rs   # remove comments except task markers
-rm-comments --keep-doc-comments lib.rs   # remove comments except documentation
-rm-comments --list lib.rs                # enumerate comments as JSON
-rm-comments --apply 2,5,7 lib.rs         # remove the listed comment ids only
-```
-
-See `rm-comments help` for the complete flag reference.
-
-## Install
-
-### As an agent skill
-
-#### Claude Code
-
-```
-/plugin marketplace add bryceremick/rm-comments
-/plugin install rm-comments@rm-comments
-```
-
-
-### As a standalone CLI tool
-
-
-#### Homebrew (macOS / Linux)
+#### Homebrew
 
 ```sh
 brew trust bryceremick/tap
@@ -119,8 +99,17 @@ git clone https://github.com/bryceremick/rm-comments
 cd rm-comments && cargo build --release
 ```
 
-The agent skill uses the standalone CLI under the hood — if it's not installed when
-the skill first runs, the agent offers to install it for you.
+## LLM Agent Plugins
+
+These plugins do not include the binary, only a skill instructing your agent on how and when to utilize this tool. 
+
+> Community contributions are welcome if you don't see your preferred agent here
+
+### Claude Code
+```bash
+/plugin marketplace add bryceremick/rm-comments
+/plugin install rm-comments@rm-comments
+```
 
 
 ## Safety guarantees
