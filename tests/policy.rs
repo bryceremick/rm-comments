@@ -11,8 +11,6 @@ fn strip_with(name: &str, src: &str, opts: &Options) -> String {
     strip_comments(src, lang(name), opts).unwrap()
 }
 
-// --- directives ---
-
 #[test]
 fn directives_survive_by_default() {
     let cases: &[(&str, &str)] = &[
@@ -68,8 +66,6 @@ fn directive_lookalike_in_plain_prose_is_not_kept() {
     assert_eq!(strip_with("javascript", src, &Options::default()), "let a = 1;\n");
 }
 
-// --- keep patterns ---
-
 #[test]
 fn keep_pattern_preserves_matches() {
     let src = "// TODO: fix later\n// obvious narration\nfn main() {}\n";
@@ -95,8 +91,6 @@ fn multiple_keep_patterns() {
         "// SAFETY: aligned\n// TODO: later\nfn main() {}\n"
     );
 }
-
-// --- line ranges ---
 
 #[test]
 fn lines_restricts_removal() {
@@ -126,8 +120,6 @@ fn lines_intersects_multiline_comments() {
     let opts = Options { lines: vec![(2, 2)], ..Default::default() };
     assert_eq!(strip_with("rust", src, &opts), "fn main() {}\n");
 }
-
-// --- list_comments ---
 
 #[test]
 fn list_reports_ids_spans_and_flags() {
@@ -173,8 +165,6 @@ fn list_multiline_block_line_span() {
 fn list_refuses_parse_errors() {
     assert!(list_comments("fn ][ nope", lang("rust")).is_err());
 }
-
-// --- only_ids (apply) ---
 
 #[test]
 fn only_ids_removes_exactly_those() {

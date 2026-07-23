@@ -185,8 +185,6 @@ fn help_exits_0() {
     }
 }
 
-// --- file-system behavior ---
-
 #[test]
 fn no_temp_file_left_behind() {
     let f = tmpfile("a.rs", DIRTY);
@@ -210,8 +208,6 @@ fn permissions_preserved() {
     let mode = fs::metadata(&f).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o754);
 }
-
-// --- agent controls: --keep, --strip-directives, --lines, --list, --apply ---
 
 #[test]
 fn keep_flag_preserves_matches() {

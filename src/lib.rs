@@ -251,7 +251,6 @@ pub fn strip_comments(src: &str, lang: &Lang, opts: &Options) -> Result<String, 
                         line_of(&line_starts, start),
                         line_of(&line_starts, end.saturating_sub(1).max(start)),
                     );
-                    // only remove comments intersecting a requested range
                     if !opts.lines.iter().any(|&(a, b)| first <= b && last >= a) {
                         return false;
                     }

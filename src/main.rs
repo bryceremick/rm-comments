@@ -113,7 +113,6 @@ fn main() {
         }
     }
 
-    // Resolve (source, language, display name) from stdin or file.
     let (src, lang, display): (String, &languages::Lang, String) = if use_stdin {
         let lang_name = lang_name.unwrap_or_else(|| die("--stdin requires --lang <NAME>"));
         let lang = languages::by_name(&lang_name)

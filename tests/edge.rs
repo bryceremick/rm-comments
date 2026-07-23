@@ -14,8 +14,6 @@ fn strip(name: &str, src: &str) -> String {
     strip_comments(src, lang(name), &Options::default()).unwrap()
 }
 
-// --- comment-like text inside non-comment nodes ---
-
 #[test]
 fn js_regex_with_slashes_preserved() {
     let src = "const re = /https:\\/\\/x/; // go\n";
@@ -48,8 +46,6 @@ fn multibyte_chars_inside_comment() {
     let src = "fn main() {} // héllo 🦀 comment\n";
     assert_eq!(strip("rust", src), "fn main() {}\n");
 }
-
-// --- whitespace policy ---
 
 #[test]
 fn inline_block_comment_keeps_surrounding_spaces() {
@@ -102,8 +98,6 @@ fn block_comment_with_code_on_both_ends() {
     assert_eq!(strip("rust", src), "fn main() {\n let x = 1; }\n");
 }
 
-// --- line endings & file shape ---
-
 #[test]
 fn crlf_multiline_block() {
     let src = "/* a\r\n   b */\r\nfn main() {\r\n}\r\n";
@@ -139,8 +133,6 @@ fn shebang_then_comments_only() {
     assert_eq!(strip("bash", src), "#!/bin/sh\n");
 }
 
-// --- doc comments across languages ---
-
 #[test]
 fn keep_doc_jsdoc() {
     let src = "/** jsdoc */\nfunction f() {}\n// plain\nfunction g() {}\n";
@@ -162,8 +154,6 @@ fn empty_block_comment_is_not_doc() {
     let out = strip_comments(src, lang("rust"), &keep_doc()).unwrap();
     assert_eq!(out, "fn main() {}\n");
 }
-
-// --- registry lookups ---
 
 #[test]
 fn extension_lookup_is_case_insensitive() {
