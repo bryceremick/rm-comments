@@ -8,7 +8,7 @@
     {
       "name": "rm-comments",
       "source": "./",
-      "description": "Remove unnecessary comments from source code — keeps WHY comments, removes WHAT comments. Requires the rm-comments CLI (cargo install rm-comments)."
+      "description": "Remove unnecessary comments from source code — keeps WHY comments, removes WHAT comments. Uses the rm-comments CLI; the skill offers to install it if missing."
     }
   ]
 }

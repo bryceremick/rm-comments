@@ -1,6 +1,6 @@
 [package]
 name = "rm-comments"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Strip all comments from source files, safely, via tree-sitter. Ships one-command Zed editor integration."
 license = "MIT"

@@ -1,37 +1,127 @@
 # rm-comments
 
-Remove **all** comments from source files — safely. Parsing is done with
-[tree-sitter](https://tree-sitter.github.io), so comment-like text inside strings, regexes,
-or docstrings is never touched. 17 languages supported.
+> **AI agents:** see [llms.md](llms.md) for complete installation and usage
+> instructions intended for LLMs.
+
+## Overview
+
+`rm-comments` is a command-line tool that removes comments from source code. Files
+are parsed with [tree-sitter](https://tree-sitter.github.io) rather than matched with
+regular expressions, so removal is grounded in the language's actual syntax:
+comment-like sequences inside string literals, regular expressions, and docstrings
+are never affected, and everything that is not a comment is preserved byte for byte.
+
+## Example
 
 ```sh
-rm-comments src/main.rs              # strip in place (atomic write)
-rm-comments --stdout src/main.rs     # print result, don't modify
-rm-comments --check src/main.rs      # exit 1 if changes would be made (CI/hooks)
-cat foo.py | rm-comments --stdin --lang py
-rm-comments --keep-doc-comments lib.rs   # preserve ///, //!, /** */ docs
-rm-comments --keep 'TODO|SAFETY' lib.rs  # preserve comments matching a regex
-rm-comments --lines 40-80 lib.rs         # only touch comments in a line range
-rm-comments --list lib.rs                # enumerate all comments as JSON
-rm-comments --apply 2,5,7 lib.rs         # remove exactly those comment ids
+rm-comments src/main.rs
 ```
 
-**Directive comments are preserved by default** — `// eslint-disable`, `# noqa`,
-`# type: ignore`, `//go:generate`, `# shellcheck`, `# frozen_string_literal` and friends
-carry semantics for other tools, so removing them changes program behavior. Pass
-`--strip-directives` to remove them too.
+**Before:**
+
+```rust
+/// Loads the configuration from the given path.
+fn load(path: &Path) -> Config {
+    // First, read the contents of the file into a string.
+    let s = read(path); // read the file
+    /* Now that we have the string, we can parse it.
+       The parse function takes the string and a key. */
+    let cfg = parse(&s, "key // not a comment");
+    // Finally, return the parsed configuration.
+    cfg
+}
+```
+
+**After:**
+
+```rust
+fn load(path: &Path) -> Config {
+    let s = read(path);
+    let cfg = parse(&s, "key // not a comment");
+    cfg
+}
+```
+
+## Capabilities
+
+- **17 languages** — Rust, JavaScript/TypeScript/JSX, Python, Go, Java, C/C++, C#,
+  Ruby, PHP, HTML, CSS, Bash, YAML, and TOML, detected by file extension.
+- **Safety** — files that fail to parse are never modified; writes are atomic; line
+  endings, shebang lines, and all non-comment content are preserved exactly. Running
+  the tool twice produces the same result as running it once.
+- **Flexibility** — remove everything, or retain by category: directive comments
+  (`eslint-disable`, `# noqa`, `//go:generate`, and similar) are preserved by default
+  since removing them changes program behavior; doc comments, user-defined patterns,
+  and specific line ranges can each be controlled by flag.
+- **AI integration** — ships as a Claude Code plugin whose skill
+  ([`SKILL.md`](skills/rm-comments/SKILL.md)) applies a defined policy: comments that
+  explain rationale or constraints are kept, comments that narrate what the code
+  already expresses are removed.
+- **Automation support** — JSON enumeration of every comment, removal by id,
+  line-range scoping, and a dry-run mode with conventional exit codes for CI and
+  pre-commit use.
+
+## Usage
+
+```sh
+rm-comments --check src/main.rs          # report whether changes would be made
+rm-comments --keep 'TODO|FIXME' lib.rs   # remove comments except task markers
+rm-comments --keep-doc-comments lib.rs   # remove comments except documentation
+rm-comments --list lib.rs                # enumerate comments as JSON
+rm-comments --apply 2,5,7 lib.rs         # remove the listed comment ids only
+```
+
+See `rm-comments help` for the complete flag reference.
 
 ## Install
 
-```sh
-brew install bryceremick/tap/rm-comments   # macOS / Linux, no toolchain needed
-cargo install rm-comments                  # from source via crates.io
-cargo binstall rm-comments                 # prebuilt binary via cargo-binstall
+### As an agent skill
+
+#### Claude Code
+
+```
+/plugin marketplace add bryceremick/rm-comments
+/plugin install rm-comments@rm-comments
 ```
 
-Prebuilt binaries for macOS (arm/x86), Linux (arm/x86), and Windows are on the
-[releases page](https://github.com/bryceremick/rm-comments/releases). Or build from
-source: `cargo build --release` → `target/release/rm-comments`.
+
+### As a standalone CLI tool
+
+
+#### Homebrew (macOS / Linux)
+
+```sh
+brew trust bryceremick/tap
+brew install bryceremick/tap/rm-comments
+```
+
+#### crates.io
+
+```sh
+cargo install rm-comments
+```
+
+#### cargo-binstall (prebuilt, no compile)
+
+```sh
+cargo binstall rm-comments
+```
+
+#### Prebuilt binaries
+
+All platforms (incl. Windows), on the
+[releases page](https://github.com/bryceremick/rm-comments/releases).
+
+#### From source
+
+```sh
+git clone https://github.com/bryceremick/rm-comments
+cd rm-comments && cargo build --release
+```
+
+The agent skill uses the standalone CLI under the hood — if it's not installed when
+the skill first runs, the agent offers to install it for you.
+
 
 ## Safety guarantees
 
@@ -103,83 +193,6 @@ buffer first (`"save": "current"`), strips the file on disk, and Zed reloads it.
 one-press keybinding, add [`zed/keymap.json`](zed/keymap.json) to `~/.config/zed/keymap.json`
 (`cmd-alt-/` by default). Manual task setup: [`zed/tasks.json`](zed/tasks.json).
 
-### Why a task and not a Zed extension?
-
-Zed's extension API currently has two hard limitations that make the "obvious" WASM
-extension impossible:
-
-1. **Extensions cannot read or modify buffer text** — there is no buffer-text API.
-2. **Extensions cannot register command-palette actions or tasks.**
-
-So the CLI edits the file on disk and Zed picks up the change — the closest achievable UX
-today. The `task: spawn` hop in the palette is a Zed limit, not a design choice. Prefer
-spawning over `task::Rerun` (rerun reuses a stale `$ZED_FILE` unless bound with
-`"reevaluate_context": true`). If the task fails, the file is untouched; open Zed's
-terminal panel to see the error.
-
-## For AI agents
-
-LLMs over-comment. `rm-comments` is built to be the safe mechanical layer under an
-agent's judgment: the agent decides *which* comments are noise, the tool guarantees the
-removal can't corrupt anything.
-
-The contract:
-
-```sh
-rm-comments --list file.rs     # JSON: every comment with id, lines, text, is_doc, is_directive
-rm-comments --apply 2,5,7 file.rs   # remove exactly those ids, nothing else
-```
-
-The agent reads the JSON, applies its policy (e.g. "keep comments explaining *why*,
-drop comments narrating *what*"), and applies the surviving verdict. `--lines A-B` scopes
-policy-mode stripping to a region — useful when the agent should only clean code it just
-wrote. Ids are positions in the current content; re-run `--list` after any edit.
-
-**Claude Code plugin** — this repo is a plugin marketplace. In Claude Code:
-
-```
-/plugin marketplace add bryceremick/rm-comments
-/plugin install rm-comments@rm-comments
-```
-
-That installs the skill below plus a session check that tells the agent how to install
-the CLI if it's missing.
-
-**Or just the skill** — [`skills/rm-comments/SKILL.md`](skills/rm-comments/SKILL.md)
-packages this workflow with an opinionated keep/remove policy (WHY stays, WHAT goes):
-
-```sh
-mkdir -p ~/.claude/skills/rm-comments
-cp skills/rm-comments/SKILL.md ~/.claude/skills/rm-comments/
-```
-
-(or into a project's `.claude/skills/` to share it with the team). Then `/rm-comments`
-or just ask the agent to clean up comments.
-
-**Hook recipe (blunt instrument)** — strip every comment from any file Claude Code edits,
-automatically. Good for greenfield/solo projects where no comments are wanted at all;
-too aggressive for shared codebases (prefer the skill there). In `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -r '.tool_input.file_path // empty' | xargs -I{} rm-comments {} 2>/dev/null || true"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Directives survive even the blunt instrument (default-on protection), and unparseable or
-unsupported files are left untouched, so the hook is safe to fire on everything.
 
 ## Tests
 

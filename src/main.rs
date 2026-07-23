@@ -13,6 +13,7 @@ Strip all comments from a source file (in place by default).
 
 Commands:
   install-zed-task     Add a 'rm-comments' task to ~/.config/zed/tasks.json
+  help                 Show this help
 
 Options:
   --stdout             Write result to stdout instead of modifying the file
@@ -99,7 +100,7 @@ fn main() {
                     .collect();
                 opts.only_ids = Some(ids);
             }
-            "-h" | "--help" => {
+            "-h" | "--help" | "help" => {
                 println!("{USAGE}");
                 return;
             }

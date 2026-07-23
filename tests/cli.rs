@@ -178,9 +178,11 @@ fn unknown_flag_exits_2() {
 
 #[test]
 fn help_exits_0() {
-    let out = run(&["--help"]);
-    assert_eq!(out.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage"));
+    for arg in ["--help", "-h", "help"] {
+        let out = run(&[arg]);
+        assert_eq!(out.status.code(), Some(0), "{arg} failed");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("Usage"));
+    }
 }
 
 // --- file-system behavior ---
