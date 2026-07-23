@@ -35,7 +35,8 @@ Options:
   --list               Print all comments as JSON (id, span, text, flags); no changes
   --apply <IDS>        Remove exactly these comma-separated comment ids (from
                        --list) and ignore all keep policies
-  -h, --help           Show this help";
+  -h, --help           Show this help
+  -V, --version        Show version";
 
 fn die(msg: &str) -> ! {
     eprintln!("rm-comments: {msg}");
@@ -110,6 +111,10 @@ fn main() {
             }
             "-h" | "--help" | "help" => {
                 println!("{USAGE}");
+                return;
+            }
+            "-V" | "--version" | "version" => {
+                println!("rm-comments {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             _ if arg.starts_with('-') => die(&format!("unknown flag {arg}\n{USAGE}")),

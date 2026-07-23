@@ -85,6 +85,14 @@ fn check_clean_exits_0() {
 }
 
 #[test]
+fn version_flag_prints_version() {
+    let out = run(&["--version"]);
+    assert!(out.status.success());
+    let expected = format!("rm-comments {}\n", env!("CARGO_PKG_VERSION"));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
+}
+
+#[test]
 fn dry_run_is_alias_for_check() {
     let f = tmpfile("a.rs", DIRTY);
     let out = run(&["--dry-run", f.to_str().unwrap()]);
