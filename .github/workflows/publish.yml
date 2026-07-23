@@ -17,7 +17,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: v
         run: |
           V=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
@@ -48,7 +48,7 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup target add ${{ matrix.target }}
       - run: cargo test --target ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
@@ -61,7 +61,7 @@ jobs:
           mkdir pkg
           cp "target/${{ matrix.target }}/release/$bin" pkg/
           tar -C pkg -czf "rm-comments-v$V-${{ matrix.target }}.tar.gz" .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}
           path: rm-comments-*.tar.gz
@@ -70,8 +70,8 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: bin-*
           merge-multiple: true
@@ -91,7 +91,7 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Publish if version not on crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -109,7 +109,7 @@ jobs:
     needs: [version, github-release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Update tap formula
         env:
           GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
