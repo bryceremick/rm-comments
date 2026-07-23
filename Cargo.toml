@@ -2,7 +2,7 @@
 name = "rm-comments"
 version = "0.2.0"
 edition = "2024"
-description = "Strip all comments from source files, safely, via tree-sitter. Ships one-command Zed editor integration."
+description = "Safely and quickly strip unwanted comments from source files."
 license = "MIT"
 repository = "https://github.com/bryceremick/rm-comments"
 readme = "README.md"
