@@ -1,7 +1,7 @@
 {
   "name": "rm-comments",
   "description": "Remove unnecessary comments from source code. Ships a skill that keeps WHY comments and removes WHAT comments using the rm-comments CLI.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": {
     "name": "Bryce Remick",
     "url": "https://github.com/bryceremick"
