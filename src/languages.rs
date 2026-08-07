@@ -101,6 +101,14 @@ pub static LANGUAGES: &[Lang] = &[
         comment_kinds: &["comment"],
     },
     Lang {
+        name: "dart",
+        extensions: &["dart"],
+        language: || tree_sitter_dart::LANGUAGE.into(),
+        // block_comment / documentation_block_comment nest *inside* `comment`
+        // in this grammar; matching only the outer node avoids duplicate ranges
+        comment_kinds: &["comment"],
+    },
+    Lang {
         name: "html",
         extensions: &["html", "htm"],
         language: || tree_sitter_html::LANGUAGE.into(),

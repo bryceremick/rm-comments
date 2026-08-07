@@ -132,7 +132,7 @@ selecting ids.
 ## Supported languages
 
 Detected by extension (case-insensitive): rs; js/jsx/mjs/cjs; ts/mts/cts; tsx;
-py/pyi; go; java; c/h; cpp/cc/cxx/hpp/hh/hxx; cs; rb/rake/gemspec; php; html/htm;
+py/pyi; go; java; c/h; cpp/cc/cxx/hpp/hh/hxx; cs; rb/rake/gemspec; php; dart; html/htm;
 css; sh/bash/zsh; yml/yaml; toml. The authoritative list is the `LANGUAGES` registry
 in [`src/languages.rs`](src/languages.rs).
 

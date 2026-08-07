@@ -76,6 +76,8 @@ pub const DIRECTIVE_PREFIXES: &[&str] = &[
     "go:", "nolint",
     // Shell
     "shellcheck",
+    // Dart
+    "ignore:", "ignore_for_file:",
     // Ruby
     "rubocop:", "frozen_string_literal:", "encoding:",
     // C/C++/C#/Java tooling
