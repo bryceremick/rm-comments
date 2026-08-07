@@ -987,7 +987,15 @@ fn git_in(dir: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
-/// A repo with one committed file, returning (dir, base commit sha).
+/// Like `run`, but with the child's cwd set — the only way to exercise the
+/// path-less `--since` form, which resolves the repo from the working directory.
+fn run_in(dir: &Path, args: &[&str]) -> Output {
+    Command::new(BIN).current_dir(dir).args(args).output().unwrap()
+}
+
+/// A repo with one committed file on a branch named `main`, returning
+/// (dir, base commit sha). `-M main` rather than `init -b` so the fixture
+/// doesn't depend on the host's `init.defaultBranch`.
 fn repo_with_base(file: &str, contents: &str) -> Option<(PathBuf, String)> {
     let d = tmpdir();
     if !git_init(&d) {
@@ -998,6 +1006,7 @@ fn repo_with_base(file: &str, contents: &str) -> Option<(PathBuf, String)> {
     write_in(&d, file, contents);
     git_in(&d, &["add", "-A"]);
     git_in(&d, &["commit", "-qm", "base"]);
+    git_in(&d, &["branch", "-M", "main"]);
     let sha = git_in(&d, &["rev-parse", "HEAD"]);
     Some((d, sha))
 }
@@ -1083,4 +1092,168 @@ fn since_outside_a_repo_errors_and_writes_nothing() {
     let out = run(&[d.to_str().unwrap(), "--since", "main"]);
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(fs::read_to_string(&f).unwrap(), DIRTY);
+}
+
+/// The core promise of `--since`: ranges come from the merge base, so commits
+/// that landed on the base branch *after* we branched are not ours to clean.
+/// Also covers passing a branch name rather than a sha.
+#[test]
+fn since_uses_the_merge_base_not_the_ref_tip() {
+    let Some((d, _)) = repo_with_base("a.rs", BASE_RS) else { return };
+
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    write_in(&d, "a.rs", &format!("{BASE_RS}// feature narration\nfn b() {{}}\n"));
+    git_in(&d, &["commit", "-qam", "feat"]);
+
+    // base branch moves on independently, adding a comment of its own
+    git_in(&d, &["checkout", "-q", "main"]);
+    write_in(&d, "a.rs", &format!("{BASE_RS}// main-only narration\nfn c() {{}}\n"));
+    git_in(&d, &["commit", "-qam", "main work"]);
+    git_in(&d, &["checkout", "-q", "feature"]);
+
+    let json = String::from_utf8(run(&[d.to_str().unwrap(), "--list", "--since", "main"]).stdout).unwrap();
+    assert!(json.contains("// feature narration"), "{json}");
+    assert!(!json.contains("// main-only narration"), "merge base ignored: {json}");
+    assert!(!json.contains("// pre-existing narration"), "{json}");
+}
+
+/// A single FILE the branch never touched: valid empty listing (never a panic),
+/// and never modified.
+#[test]
+fn since_on_an_untouched_file_is_a_no_op() {
+    let Some((d, _)) = repo_with_base("untouched.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    write_in(&d, "new.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "feat"]);
+
+    let f = d.join("untouched.rs");
+    let out = run(&[f.to_str().unwrap(), "--list", "--since", "main"]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let json = String::from_utf8(out.stdout).unwrap();
+    assert!(json.contains(r#""comments""#), "must still be valid JSON: {json}");
+    assert!(!json.contains(r#""id""#), "no comments in scope: {json}");
+
+    assert!(run(&[f.to_str().unwrap(), "--since", "main"]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), BASE_RS);
+}
+
+/// With no FILE argument the repo is resolved from the working directory.
+#[test]
+fn since_defaults_to_the_repo_when_no_path_is_given() {
+    let Some((d, _)) = repo_with_base("a.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    let f = write_in(&d, "a.rs", &format!("{BASE_RS}// feature narration\nfn b() {{}}\n"));
+    git_in(&d, &["commit", "-qam", "feat"]);
+
+    let out = run_in(&d, &["--since", "main"]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    assert_eq!(fs::read_to_string(&f).unwrap(), format!("{BASE_RS}fn b() {{}}\n"));
+}
+
+/// The path argument still narrows: changes outside it are left alone.
+#[test]
+fn since_narrows_to_the_path_argument() {
+    let Some((d, _)) = repo_with_base("outside.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    write_in(&d, "outside.rs", &format!("{BASE_RS}// outside narration\nfn o() {{}}\n"));
+    let inside = write_in(&d, "src/api/x.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "feat"]);
+
+    let sub = d.join("src/api");
+    assert!(run(&[sub.to_str().unwrap(), "--since", "main"]).status.success());
+    assert_eq!(fs::read_to_string(&inside).unwrap(), CLEAN);
+    assert!(fs::read_to_string(d.join("outside.rs")).unwrap().contains("// outside narration"));
+}
+
+#[test]
+fn since_check_reports_only_in_scope_changes() {
+    let Some((d, _)) = repo_with_base("untouched.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    write_in(&d, "new.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "feat"]);
+
+    // the branch introduced strippable comments -> 1
+    assert_eq!(run(&[d.to_str().unwrap(), "--check", "--since", "main"]).status.code(), Some(1));
+    // ...but a file it never touched is clean as far as --since is concerned -> 0
+    let untouched = d.join("untouched.rs");
+    assert_eq!(run(&[untouched.to_str().unwrap(), "--check", "--since", "main"]).status.code(), Some(0));
+}
+
+/// A branch that deletes a file must not abort the run: the deleted path can't
+/// be read, so it is excluded from the diff rather than reported as an error.
+#[test]
+fn since_tolerates_files_the_branch_deleted() {
+    let Some((d, _)) = repo_with_base("doomed.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    git_in(&d, &["rm", "-q", "doomed.rs"]);
+    let kept = write_in(&d, "new.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "feat"]);
+
+    let out = run(&[d.to_str().unwrap(), "--since", "main"]);
+    assert!(out.status.success(), "stderr: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_to_string(&kept).unwrap(), CLEAN);
+}
+
+/// A comment can't be removed halfway. When a block comment intersects the
+/// branch's lines it goes entirely, even though it opened and closed on lines
+/// the branch never touched — same intersection rule as `--lines`.
+#[test]
+fn since_removes_a_block_comment_straddling_the_boundary() {
+    const BLOCK: &str = "fn a() {}\n/* opens on an untouched line\n   MIDDLE\n   closes on an untouched line */\nfn b() {}\n";
+    let Some((d, _)) = repo_with_base("s.rs", BLOCK) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    let f = write_in(&d, "s.rs", &BLOCK.replace("MIDDLE", "EDITED BY THE BRANCH"));
+    git_in(&d, &["commit", "-qam", "feat"]);
+
+    assert!(run(&[d.to_str().unwrap(), "--since", "main"]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), "fn a() {}\nfn b() {}\n");
+}
+
+#[test]
+fn since_with_an_unknown_ref_errors_and_writes_nothing() {
+    let Some((d, _)) = repo_with_base("a.rs", BASE_RS) else { return };
+    let f = write_in(&d, "a.rs", DIRTY);
+    let out = run(&[d.to_str().unwrap(), "--since", "no-such-ref"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&f).unwrap(), DIRTY);
+}
+
+/// --since only sets the line scope; the keep policies still apply inside it.
+#[test]
+fn since_composes_with_keep_policies() {
+    let Some((d, _)) = repo_with_base("a.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-qb", "feature"]);
+    let added = "// plain narration\n// TODO: real follow-up\n/// doc comment\n// spare me\nfn b() {}\n";
+    let f = write_in(&d, "a.rs", &format!("{BASE_RS}{added}"));
+    git_in(&d, &["commit", "-qam", "feat"]);
+
+    assert!(run(&[d.to_str().unwrap(), "--since", "main", "--keep", "spare me"]).status.success());
+    let got = fs::read_to_string(&f).unwrap();
+    assert_eq!(
+        got,
+        format!("{BASE_RS}// TODO: real follow-up\n/// doc comment\n// spare me\nfn b() {{}}\n"),
+        "markers/docs/--keep survive inside the --since scope"
+    );
+}
+
+/// Unrelated histories have no merge base, so `git merge-base` fails and the
+/// ref itself is used as the diff base. Exercises the fallback's success path
+/// (the unknown-ref test above only covers it failing through to an error).
+#[test]
+fn since_falls_back_to_the_ref_when_there_is_no_merge_base() {
+    let Some((d, _)) = repo_with_base("a.rs", BASE_RS) else { return };
+    git_in(&d, &["checkout", "-q", "--orphan", "orphan"]);
+    git_in(&d, &["rm", "-rfq", "--cached", "."]);
+    fs::remove_file(d.join("a.rs")).unwrap();
+    let f = write_in(&d, "b.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "orphan root"]);
+
+    let out = run(&[d.to_str().unwrap(), "--since", "main"]);
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read_to_string(&f).unwrap(), CLEAN);
 }

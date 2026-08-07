@@ -616,3 +616,34 @@ fn write_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::hunk_ranges;
+
+    #[test]
+    fn parses_the_new_side_of_hunk_headers() {
+        // count omitted means 1; a 0 count is a pure deletion and adds no lines
+        assert_eq!(hunk_ranges("@@ -0,0 +1,3 @@\n"), [(1, 3)]);
+        assert_eq!(hunk_ranges("@@ -1 +5 @@\n"), [(5, 5)]);
+        assert_eq!(hunk_ranges("@@ -3,2 +3,0 @@\n"), []);
+        assert_eq!(
+            hunk_ranges("@@ -1,0 +1,2 @@\n@@ -9,1 +11,1 @@\n"),
+            [(1, 2), (11, 11)]
+        );
+    }
+
+    /// `+++ b/file` also starts with `+`, and hunk headers can carry trailing
+    /// context containing one; neither may be mistaken for the range.
+    #[test]
+    fn ignores_non_hunk_lines_and_trailing_context() {
+        let patch = "\
+diff --git a/x.rs b/x.rs
+--- a/x.rs
++++ b/x.rs
+@@ -1,2 +4,5 @@ fn ctx(a: +b) {
++added
+";
+        assert_eq!(hunk_ranges(patch), [(4, 8)]);
+    }
+}
