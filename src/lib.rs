@@ -8,6 +8,7 @@ use tree_sitter::Parser;
 /// What to remove. `Default` (safety-first) = remove only plain/narration
 /// comments; doc comments, semantic directives (see [`DIRECTIVE_PREFIXES`]),
 /// task markers (see [`MARKER_PREFIXES`]), and the line-1 shebang are kept.
+#[derive(Clone)]
 pub struct Options {
     /// Preserve doc comments (`///`, `//!`, `/*!`, `/** */`).
     /// On by default: they document intent worth keeping.

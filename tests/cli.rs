@@ -957,3 +957,130 @@ fn dir_permissions_preserved() {
     let mode = fs::metadata(&a).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o754);
 }
+
+/// `--list --lines` is the git-diff workflow: report only the comments a branch
+/// introduced, but keep ids positional over the whole file so `--apply` still
+/// addresses the right ones.
+#[test]
+fn list_lines_scopes_report_but_not_ids() {
+    let f = tmpfile("a.rs", "// zero\n// one\nfn main() {}\n// three\n");
+    let out = run(&[f.to_str().unwrap(), "--list", "--lines", "2-2"]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let json = String::from_utf8(out.stdout).unwrap();
+    assert!(json.contains(r#""text": "// one""#), "{json}");
+    assert!(!json.contains("// zero"), "{json}");
+    assert!(!json.contains("// three"), "{json}");
+    assert!(json.contains(r#""id": 1"#), "id must stay positional: {json}");
+
+    // the id from the scoped listing still removes the right comment
+    assert!(run(&[f.to_str().unwrap(), "--apply", "1"]).status.success());
+    assert_eq!(
+        fs::read_to_string(&f).unwrap(),
+        "// zero\nfn main() {}\n// three\n"
+    );
+}
+
+/// Run git in `dir`, panicking on failure (test-side setup, not the tool).
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// A repo with one committed file, returning (dir, base commit sha).
+fn repo_with_base(file: &str, contents: &str) -> Option<(PathBuf, String)> {
+    let d = tmpdir();
+    if !git_init(&d) {
+        return None; // no git on this machine: caller skips
+    }
+    git_in(&d, &["config", "user.email", "t@t.t"]);
+    git_in(&d, &["config", "user.name", "t"]);
+    write_in(&d, file, contents);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "base"]);
+    let sha = git_in(&d, &["rev-parse", "HEAD"]);
+    Some((d, sha))
+}
+
+const BASE_RS: &str = "// pre-existing narration\nfn a() {}\n";
+
+#[test]
+fn since_lists_only_lines_the_branch_introduced() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    write_in(&d, "a.rs", &format!("{BASE_RS}// brand new narration\nfn b() {{}}\n"));
+
+    let out = run(&[d.to_str().unwrap(), "--list", "--since", &base]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let json = String::from_utf8(out.stdout).unwrap();
+    assert!(json.contains("// brand new narration"), "{json}");
+    assert!(!json.contains("// pre-existing narration"), "{json}");
+}
+
+#[test]
+fn since_strips_only_lines_the_branch_introduced() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    let f = write_in(&d, "a.rs", &format!("{BASE_RS}// brand new narration\nfn b() {{}}\n"));
+
+    assert!(run(&[d.to_str().unwrap(), "--since", &base]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), format!("{BASE_RS}fn b() {{}}\n"));
+}
+
+/// The diff runs against the working tree, not HEAD, so ranges keep describing
+/// the file as it sits on disk even when edits are uncommitted.
+#[test]
+fn since_is_correct_with_a_dirty_tree() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    // commit one change, then leave a second uncommitted above it
+    let f = write_in(&d, "a.rs", &format!("{BASE_RS}// committed narration\nfn b() {{}}\n"));
+    git_in(&d, &["commit", "-qam", "wip"]);
+    fs::write(&f, format!("// uncommitted narration\n{BASE_RS}// committed narration\nfn b() {{}}\n")).unwrap();
+
+    assert!(run(&[d.to_str().unwrap(), "--since", &base]).status.success());
+    assert_eq!(fs::read_to_string(&f).unwrap(), format!("{BASE_RS}fn b() {{}}\n"));
+}
+
+/// Untracked files are invisible to `git diff`; scoping them whole beats
+/// silently leaving a brand-new file uncleaned.
+#[test]
+fn since_covers_untracked_files_whole() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    let new = write_in(&d, "new.rs", DIRTY);
+    assert!(run(&[d.to_str().unwrap(), "--since", &base]).status.success());
+    assert_eq!(fs::read_to_string(&new).unwrap(), CLEAN);
+    // the untouched committed file keeps its comment
+    assert_eq!(fs::read_to_string(d.join("a.rs")).unwrap(), BASE_RS);
+}
+
+#[test]
+fn since_ignores_files_the_branch_never_touched() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    write_in(&d, "b.rs", DIRTY);
+    git_in(&d, &["add", "-A"]);
+    git_in(&d, &["commit", "-qm", "add b"]);
+
+    let json = String::from_utf8(run(&[d.to_str().unwrap(), "--list", "--since", &base]).stdout).unwrap();
+    assert!(json.contains("b.rs"), "{json}");
+    assert!(!json.contains("a.rs"), "untouched file must not be listed: {json}");
+}
+
+#[test]
+fn since_rejects_flags_that_would_conflict() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    for extra in [vec!["--lines", "1-2"], vec!["--apply", "0"]] {
+        let mut args = vec![d.to_str().unwrap(), "--since", &base];
+        args.extend(extra);
+        let out = run(&args);
+        assert_eq!(out.status.code(), Some(2), "args {args:?} should be rejected");
+    }
+    let out = run_stdin(&["--stdin", "--lang", "rust", "--since", &base], DIRTY);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn since_outside_a_repo_errors_and_writes_nothing() {
+    let d = tmpdir();
+    let f = write_in(&d, "a.rs", DIRTY);
+    let out = run(&[d.to_str().unwrap(), "--since", "main"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(fs::read_to_string(&f).unwrap(), DIRTY);
+}

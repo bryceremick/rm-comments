@@ -32,7 +32,9 @@ Three source files, ~840 lines:
   (hand-rolled, no serde), atomic writes, and `install-zed-task`. Directory support lives
   here too: `process_one()` handles a single file and `run_dir()` walks a directory (via
   the `ignore` crate, honoring `.gitignore` + skipping hidden dirs), calling `process_one`
-  per supported file. The library is untouched by directory mode.
+  per supported file. `--since` also lives here: `since_ranges()` shells out to `git`
+  (no new dependency) to build a path → line-ranges map, which `process_one` folds into
+  a per-file `Options.lines`. The library is untouched by directory and `--since` mode.
 
 ### How stripping works (the important flow)
 
@@ -63,7 +65,12 @@ presence is preserved. Empty result-set → returns the original string byte-for
   `--strip-directives` / `--strip-markers`. Markers match as a whole leading token
   (word boundary), so `// todos` and `// buggy` are not kept.
 - **`--list` ids are positional** in current file content; they're invalid after any
-  edit. `--apply` ignores all keep policies.
+  edit. `--apply` ignores all keep policies. `--list` honors `--lines`/`--since`, but
+  filters *after* ids are assigned, so a scoped listing's ids still work with `--apply`.
+- **`--since` diffs merge-base → working tree**, never → HEAD: `--lines` and ids address
+  the file on disk, so anything else silently mis-scopes a dirty tree. An empty range set
+  means "skip this file", which `Options.lines` can't express (empty = no scoping there),
+  so `process_one` bails out explicitly instead.
 - Exit codes: `0` ok / `1` only for `--check` when changes would be made / `2` error.
   On any error the file is left untouched.
 

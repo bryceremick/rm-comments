@@ -53,7 +53,8 @@ were still processed); `--check` exits `1` if any file would change.
 | `--strip-directives` | Also remove directive comments (`eslint-disable`, `# noqa`, …); kept by default |
 | `--strip-markers` | Also remove task markers (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`); kept by default |
 | `--keep <REGEX>` | Preserve comments matching REGEX (repeatable) |
-| `--lines <A-B>` | Restrict removal to 1-based line range (repeatable; `N` = single line) |
+| `--lines <A-B>` | Restrict to 1-based line range (repeatable; `N` = single line). Scopes `--list` too |
+| `--since <REF>` | Restrict to the lines introduced since git REF; see below. FILE\|DIR optional |
 | `--list` | Print all comments as JSON; modifies nothing |
 | `--apply <IDS>` | Remove exactly these comma-separated ids from `--list`; ignores all keep policies |
 
@@ -104,6 +105,31 @@ To remove those categories too, add `--strip-doc-comments` / `--strip-directives
 `--strip-markers` (all three = remove every comment).
 To clean only a region you just wrote: `rm-comments --lines 40-80 <file>`.
 To clean an entire tree at once (honors `.gitignore`, skips hidden dirs): `rm-comments <dir>`.
+
+## Auditing a whole feature before a PR (`--since`)
+
+`--since <REF>` scopes every mode to just the lines the current branch introduced, so
+you can review a feature's comments without judging code you didn't write:
+
+```sh
+rm-comments --list --since main       # every comment this branch introduced, as JSON
+rm-comments --apply 3,7 src/thing.rs  # then remove per file, as usual
+```
+
+- Ranges come from the **merge base** of `REF` and `HEAD`, diffed against the **working
+  tree** — so line numbers always match the files on disk and an uncommitted edit is
+  scoped correctly rather than silently mis-attributed. No need for a clean tree.
+- Files the branch never touched are skipped entirely (not listed, not modified).
+- Untracked files are invisible to `git diff`, so they are scoped **whole**.
+- The `FILE|DIR` argument is optional under `--since` (defaults to the repo tree) and
+  only narrows further: `rm-comments --list --since main src/api/`.
+- Composes with the other modes: `rm-comments --check --since main` is a CI gate that
+  exits 1 if the branch added strippable comments.
+- Rejected combinations (exit 2): `--lines` (it computes its own), `--apply` (ignores
+  line scoping anyway), and `--stdin` (nothing on disk to diff).
+
+Ids remain positions in the **whole file**, not in the scoped subset, so an id from a
+`--since` listing is directly usable with `--apply`.
 
 ## Judgment policy: keep WHY, remove WHAT
 

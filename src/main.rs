@@ -31,7 +31,11 @@ Options:
   --strip-markers      Also remove task markers (TODO, FIXME, HACK, XXX, BUG);
                        kept by default
   --keep <REGEX>       Preserve comments matching REGEX (repeatable)
-  --lines <A-B>        Only remove comments within 1-based line range (repeatable)
+  --lines <A-B>        Only remove (or, with --list, only report) comments within
+                       1-based line range (repeatable)
+  --since <REF>        Scope to the lines this branch introduced since git REF
+                       (merge base vs the working tree). FILE|DIR defaults to
+                       the whole tree and further narrows the scope.
   --list               Print all comments as JSON (id, span, text, flags); no changes
   --apply <IDS>        Remove exactly these comma-separated comment ids (from
                        --list) and ignore all keep policies
@@ -41,6 +45,93 @@ Options:
 fn die(msg: &str) -> ! {
     eprintln!("rm-comments: {msg}");
     exit(2);
+}
+
+/// Per-file line ranges introduced since some git ref, keyed by canonical path.
+type SinceMap = std::collections::HashMap<PathBuf, Vec<(usize, usize)>>;
+
+fn git(root: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut cmd = std::process::Command::new("git");
+    if let Some(r) = root {
+        cmd.arg("-C").arg(r);
+    }
+    let out = cmd
+        .args(args)
+        .output()
+        .map_err(|e| format!("running git: {e} (is git installed?)"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    String::from_utf8(out.stdout).map_err(|e| e.to_string())
+}
+
+/// Parse the new-side line ranges out of a `git diff -U0` patch: each
+/// `@@ -a,b +c,d @@` header contributes `c..=c+d-1`. `d` is omitted when 1 and
+/// zero for a pure deletion (which introduces no lines, so it contributes none).
+fn hunk_ranges(patch: &str) -> Vec<(usize, usize)> {
+    patch
+        .lines()
+        .filter_map(|l| l.strip_prefix("@@ "))
+        .filter_map(|l| l.split_whitespace().find(|t| t.starts_with('+')))
+        .filter_map(|t| {
+            let (start, count) = match t[1..].split_once(',') {
+                Some((s, c)) => (s.parse().ok()?, c.parse().ok()?),
+                None => (t[1..].parse().ok()?, 1usize),
+            };
+            (count > 0).then_some((start, start + count - 1))
+        })
+        .collect()
+}
+
+/// Map every file changed since `base` to the 1-based line ranges this branch
+/// introduced, for `--since`.
+///
+/// The diff is taken from the merge base to the **working tree**, not to HEAD,
+/// so the line numbers always describe the files as they sit on disk — the only
+/// thing `--lines` and `--list` ids can address. That makes a dirty tree safe
+/// rather than silently mis-scoped. Untracked files are invisible to `git diff`,
+/// so they're listed separately and scoped whole; silently skipping a brand-new
+/// file would be the worst failure here.
+fn since_ranges(base: &str, target: &Path) -> Result<SinceMap, String> {
+    // Anchor on the target, never the process cwd: `rm-comments /other/repo
+    // --since main` must resolve /other/repo's history, not ours.
+    let anchor = if target.is_dir() {
+        target.to_path_buf()
+    } else {
+        target.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf()
+    };
+    let root = PathBuf::from(git(Some(&anchor), &["rev-parse", "--show-toplevel"])?.trim());
+
+    // Prefer the merge base so unrelated commits landing on `base` after we
+    // branched don't count as ours; fall back to the ref for unrelated histories.
+    let from = git(Some(&root), &["merge-base", base, "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| base.to_string());
+
+    let mut map = SinceMap::new();
+    // `-z` gives NUL-separated, never-quoted paths; `--diff-filter=d` drops
+    // deletions. One `git diff` per file after that: the paths stay unambiguous
+    // instead of being re-parsed out of `+++ b/...` headers.
+    let listed = git(Some(&root), &["diff", "--name-only", "-z", "--diff-filter=d", &from])?;
+    for rel in listed.split('\0').filter(|s| !s.is_empty()) {
+        let patch = git(Some(&root), &["diff", "-U0", "--no-renames", &from, "--", rel])?;
+        let ranges = hunk_ranges(&patch);
+        if !ranges.is_empty() {
+            map.insert(root.join(rel), ranges);
+        }
+    }
+
+    let untracked = git(Some(&root), &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    for rel in untracked.split('\0').filter(|s| !s.is_empty()) {
+        map.insert(root.join(rel), vec![(1, usize::MAX)]);
+    }
+
+    // Canonicalize once here so lookups can match paths the caller spelled
+    // differently (./src/x.rs, symlinked roots, relative walks).
+    Ok(map
+        .into_iter()
+        .map(|(p, r)| (p.canonicalize().unwrap_or(p), r))
+        .collect())
 }
 
 fn parse_line_range(s: &str) -> (usize, usize) {
@@ -72,6 +163,7 @@ fn main() {
     let mut use_stdin = false;
     let mut lang_name: Option<String> = None;
     let mut list = false;
+    let mut since: Option<String> = None;
     let mut opts = Options::default();
 
     let mut args = std::env::args().skip(1);
@@ -97,6 +189,7 @@ fn main() {
                 );
             }
             "--lines" => opts.lines.push(parse_line_range(&value("--lines"))),
+            "--since" => since = Some(value("--since")),
             "--list" => list = true,
             "--apply" => {
                 let ids = value("--apply")
@@ -126,6 +219,20 @@ fn main() {
         }
     }
 
+    // --since derives the very things these flags set by hand; combining them
+    // would silently pick a winner, so reject instead.
+    if since.is_some() {
+        if use_stdin {
+            die("--since needs files on disk to diff; it can't be used with --stdin");
+        }
+        if !opts.lines.is_empty() {
+            die("--since computes line ranges itself; drop --lines");
+        }
+        if opts.only_ids.is_some() {
+            die("--apply ignores line scoping; drop --since");
+        }
+    }
+
     // stdin is its own input source; it can never be a directory.
     if use_stdin {
         let lang_name = lang_name.unwrap_or_else(|| die("--stdin requires --lang <NAME>"));
@@ -136,9 +243,9 @@ fn main() {
             .read_to_string(&mut src)
             .unwrap_or_else(|e| die(&format!("reading stdin: {e}")));
         if list {
-            let comments =
-                list_comments(&src, lang).unwrap_or_else(|e| die(&format!("<stdin>: {e}")));
-            print!("{}", comments_json("<stdin>", lang.name, &comments));
+            let json = listing(&src, lang, &opts, "<stdin>")
+                .unwrap_or_else(|e| die(&format!("<stdin>: {e}")));
+            print!("{json}");
             return;
         }
         let out =
@@ -154,7 +261,12 @@ fn main() {
         return;
     }
 
-    let path = file.unwrap_or_else(|| die(&format!("no file given\n{USAGE}")));
+    // --since already names the scope (everything this branch touched), so the
+    // path argument is just a further narrowing and defaults to the whole tree.
+    let path = file
+        .or_else(|| since.as_ref().map(|_| PathBuf::from(".")))
+        .unwrap_or_else(|| die(&format!("no file given\n{USAGE}")));
+    let since = since.map(|base| since_ranges(&base, &path).unwrap_or_else(|e| die(&e)));
     let mode = if list {
         Mode::List
     } else if check {
@@ -173,10 +285,10 @@ fn main() {
         if opts.only_ids.is_some() {
             die("--apply is not supported for a directory");
         }
-        run_dir(&path, &opts, mode);
+        run_dir(&path, &opts, mode, since.as_ref());
     }
 
-    match process_one(&path, &opts, mode) {
+    match process_one(&path, &opts, mode, since.as_ref()) {
         Ok(out) => match mode {
             Mode::List => print!("{}", out.list_json.unwrap()),
             Mode::Check => {
@@ -208,18 +320,42 @@ struct Outcome {
 /// Process a single file: resolve its language, read it, and act per `mode`.
 /// Returns an error string (never dies) so directory mode can skip-and-continue;
 /// callers own the exit-code / message policy. Only `Write` touches the file.
-fn process_one(path: &Path, opts: &Options, mode: Mode) -> Result<Outcome, String> {
+fn process_one(
+    path: &Path,
+    opts: &Options,
+    mode: Mode,
+    since: Option<&SinceMap>,
+) -> Result<Outcome, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .ok_or_else(|| "no file extension".to_string())?;
     let lang = languages::by_extension(ext)
         .ok_or_else(|| format!("unsupported extension '.{ext}' (file left untouched)"))?;
+
+    // Under --since, a file the branch never touched holds nothing of ours.
+    // Note the empty-ranges case can't be expressed through `Options::lines`
+    // (empty there means "no scoping at all"), so bail out explicitly.
+    let scoped;
+    let opts = match since {
+        None => opts,
+        Some(map) => match map.get(&path.canonicalize().map_err(|e| e.to_string())?) {
+            None => {
+                let list_json = matches!(mode, Mode::List)
+                    .then(|| comments_json(&path.display().to_string(), lang.name, &[]));
+                return Ok(Outcome { changed: false, list_json });
+            }
+            Some(ranges) => {
+                scoped = Options { lines: ranges.clone(), ..opts.clone() };
+                &scoped
+            }
+        },
+    };
+
     let src = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
 
     if let Mode::List = mode {
-        let comments = list_comments(&src, lang).map_err(|e| e.to_string())?;
-        let json = comments_json(&path.display().to_string(), lang.name, &comments);
+        let json = listing(&src, lang, opts, &path.display().to_string())?;
         return Ok(Outcome { changed: false, list_json: Some(json) });
     }
 
@@ -237,7 +373,7 @@ fn process_one(path: &Path, opts: &Options, mode: Mode) -> Result<Outcome, Strin
 /// supported source file through `process_one`. Unknown extensions are silently
 /// skipped; a file that errors (unreadable, doesn't parse) is left untouched,
 /// reported to stderr, and does not abort the rest of the walk.
-fn run_dir(dir: &Path, opts: &Options, mode: Mode) -> ! {
+fn run_dir(dir: &Path, opts: &Options, mode: Mode, since: Option<&SinceMap>) -> ! {
     let mut any_changed = false;
     let mut had_error = false;
     let mut list_items: Vec<String> = Vec::new();
@@ -262,7 +398,14 @@ fn run_dir(dir: &Path, opts: &Options, mode: Mode) -> ! {
             Some(ext) if languages::by_extension(ext).is_some() => {}
             _ => continue, // unknown/no extension: not ours to touch
         }
-        match process_one(p, opts, mode) {
+        // Drop untouched files here rather than in process_one, so a --list
+        // walk emits entries only for files the branch actually changed.
+        if let Some(map) = since
+            && !map.contains_key(&p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
+        {
+            continue;
+        }
+        match process_one(p, opts, mode, since) {
             Ok(o) => {
                 if o.changed {
                     any_changed = true;
@@ -309,6 +452,25 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// Enumerate `src` for `--list`, honoring `--lines` only. Ids stay positional
+/// over *every* comment in the file (filtering happens after they're assigned),
+/// so an id from a scoped listing is still valid for `--apply`. The keep
+/// policies deliberately don't apply: the caller is deciding, not us.
+fn listing(
+    src: &str,
+    lang: &languages::Lang,
+    opts: &Options,
+    name: &str,
+) -> Result<String, String> {
+    let mut comments = list_comments(src, lang)?;
+    if !opts.lines.is_empty() {
+        comments.retain(|c| {
+            opts.lines.iter().any(|&(a, b)| c.start_line <= b && c.end_line >= a)
+        });
+    }
+    Ok(comments_json(name, lang.name, &comments))
 }
 
 fn comments_json(file: &str, lang: &str, comments: &[rm_comments::Comment]) -> String {

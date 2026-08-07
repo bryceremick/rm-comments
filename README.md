@@ -140,7 +140,8 @@ rm-comments install-zed-task                  # add the Zed editor task
 | `--strip-directives` | Also remove directive comments (`eslint-disable`, `# noqa`, …); kept by default |
 | `--strip-markers` | Also remove task markers (`TODO`, `FIXME`, `HACK`, `XXX`, `BUG`); kept by default |
 | `--keep <REGEX>` | Preserve comments matching REGEX (repeatable) |
-| `--lines <A-B>` | Restrict removal to a 1-based line range (repeatable; `N` = single line) |
+| `--lines <A-B>` | Restrict to a 1-based line range (repeatable; `N` = single line). Scopes `--list` too |
+| `--since <REF>` | Restrict to the lines this branch introduced since git REF (`FILE\|DIR` optional) |
 | `--list` | Print every comment as JSON; modifies nothing |
 | `--apply <IDS>` | Remove exactly these comma-separated `--list` ids; ignores keep policies (file only) |
 
@@ -173,7 +174,28 @@ rm-comments --stdin --lang rust < in.rs > out.rs
 # Surgical removal: enumerate, pick ids, remove exactly those
 rm-comments --list src/main.rs                 # -> JSON with an id per comment
 rm-comments --apply 2,5,7 src/main.rs          # remove ids 2, 5, 7 only
+
+# Audit a whole feature branch before opening the PR
+rm-comments --list --since main                # every comment this branch introduced
+rm-comments --since main                       # ...or just strip the narration ones
+rm-comments --check --since main               # ...or gate CI on them (exit 1)
 ```
+
+### `--since`: cleaning up after a feature
+
+Agents narrate as they work, and that narration gets committed across a dozen commits.
+`--since <REF>` scopes any mode to only the lines the current branch introduced, so you
+review what the feature added and never touch pre-existing comments in files it happened
+to edit.
+
+Ranges are computed from the **merge base** of `REF` and `HEAD`, diffed against the
+**working tree** — line numbers always describe the files as they sit on disk, so a
+dirty tree is scoped correctly rather than silently mis-attributed. Files the branch
+never touched are skipped entirely; untracked files (invisible to `git diff`) are scoped
+whole. The `FILE|DIR` argument becomes optional and only narrows further.
+
+`--list` ids stay positions in the whole file, so an id from a `--since` listing is
+directly usable with `--apply`.
 
 ## Highlights
 

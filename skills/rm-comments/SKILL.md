@@ -80,12 +80,31 @@ removed WHY costs the next reader an investigation.
    still pass. If `rm-comments` exits with an error, the file was not modified; fix the
    parse problem first, do not fall back to hand-deleting comments.
 
+## Auditing a whole feature before opening a PR
+
+When the ask is "clean up the comments from this feature" rather than one file, use
+`--since <base-branch>` — it scopes every mode to the lines this branch introduced:
+
+```sh
+rm-comments --list --since main        # every comment the branch added, JSON per file
+```
+
+Then judge as usual and apply per file (`rm-comments --apply 3,7 src/thing.rs`). This is
+the right tool whenever comments got committed across several commits during a feature:
+you review only what the branch added, never pre-existing comments in files it touched.
+
+- The path argument is optional and only narrows further (`--since main src/api/`).
+- Files the branch never touched are skipped; untracked files are scoped whole.
+- Line numbers come from the working tree, so a dirty tree is fine.
+- `rm-comments --check --since main` exits 1 if the branch added strippable comments —
+  use it to check your own work before handing the branch off.
+
 ## Scoping rules
 
 - **Only clean code you wrote or were asked to clean.** After editing lines 40–80 of a
   shared file, restrict to your region instead of judging the whole file:
-  `rm-comments --lines 40-80 file.rs` (policy mode) or filter the `--list` output by
-  `start_line`/`end_line` before choosing ids.
+  `rm-comments --lines 40-80 file.rs` (policy mode), or `--list --lines 40-80` to
+  enumerate only that region. Across a whole branch, prefer `--since` (above).
 - Ids are positions in the current file content — **re-run `--list` after any edit**;
   never reuse ids across file modifications.
 - Unsupported file type or parse failure → exit code 2, file untouched. Report it and
