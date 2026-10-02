@@ -55,6 +55,7 @@ fn git(root: Option<&Path>, args: &[&str]) -> Result<String, String> {
     if let Some(r) = root {
         cmd.arg("-C").arg(r);
     }
+    cmd.args(["-c", "color.ui=false"]);
     let out = cmd
         .args(args)
         .output()

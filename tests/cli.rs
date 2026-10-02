@@ -1026,6 +1026,19 @@ fn since_lists_only_lines_the_branch_introduced() {
 }
 
 #[test]
+fn since_ignores_a_forced_color_git_config() {
+    let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
+    git_in(&d, &["config", "color.ui", "always"]);
+    write_in(&d, "a.rs", &format!("{BASE_RS}// brand new narration\nfn b() {{}}\n"));
+
+    let out = run(&[d.to_str().unwrap(), "--list", "--since", &base]);
+    assert!(out.status.success(), "stderr: {:?}", out.stderr);
+    let json = String::from_utf8(out.stdout).unwrap();
+    assert!(json.contains("// brand new narration"), "{json}");
+    assert!(!json.contains("// pre-existing narration"), "{json}");
+}
+
+#[test]
 fn since_strips_only_lines_the_branch_introduced() {
     let Some((d, base)) = repo_with_base("a.rs", BASE_RS) else { return };
     let f = write_in(&d, "a.rs", &format!("{BASE_RS}// brand new narration\nfn b() {{}}\n"));
